@@ -1,5 +1,6 @@
 # Builds designElectronics on macOS, Windows and Linux and runs the self-tests.
-# Pushing a tag like v0.1.0 also publishes a GitHub Release with the downloads.
+# Pushing a tag like v0.1.0 publishes a GitHub Release with the downloads; you can
+# also start this workflow by hand with a tag name to publish one without a push.
 name: Build
 
 on:
@@ -8,9 +9,18 @@ on:
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      release:
+        description: "Tag to publish from this build (e.g. v0.2.2). Leave empty to only build."
+        required: false
 
 permissions:
   contents: read
+
+# a new push to the same branch/tag makes the older run obsolete
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   SDL_BRANCH: release-3.4.x
@@ -143,7 +153,7 @@ jobs:
 
   release:
     name: Publish release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release != '')
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -157,7 +167,11 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release || github.ref_name }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/* \
-            --title "designElectronics ${GITHUB_REF_NAME#v}" \
+          # a tag push already has its tag; a manual run creates it here
+          extra=""
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then extra="--target $GITHUB_SHA"; fi
+          gh release create "$TAG" dist/* $extra \
+            --title "designElectronics ${TAG#v}" \
             --notes-file .github/release-notes.md

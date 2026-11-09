@@ -30,6 +30,18 @@ cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=%VCPKG_ROOT%\scripts\buildsystems\vcp
 cmake --build build --config Release
 ```
 
+No vcpkg? An unpacked SDL3 SDK works too — point CMake at the two folders
+(the build copies `SDL3.dll` and `SDL3_ttf.dll` next to the exe):
+```bat
+cmake -S . -B build -DCMAKE_PREFIX_PATH="C:\path\to\SDL3-3.x;C:\path\to\SDL3_ttf-3.x"
+cmake --build build --config Release
+```
+
+The `build/` folder is a scratch directory: it is git-ignored, and every push is
+built on GitHub Actions (`.github/workflows/build.yml`), which publishes the
+macOS, Windows and Linux downloads when a `v*` tag is pushed. Delete `build/`
+whenever you want a clean slate — nothing in it is needed by the repo.
+
 ### Vendoring SDL (any platform)
 ```sh
 git clone --depth 1 -b release-3.4.x https://github.com/libsdl-org/SDL.git external/SDL

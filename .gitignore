@@ -11,6 +11,14 @@ CLAUDE.local.md
 *.dez.autosave
 .gstack/
 
+# build products: CI builds and uploads these, they never belong in the repo
+dist/
+*.log
+.vs/
+.vscode/
+cmake-build-*/
+CMakeUserPresets.json
+
 # web build output (built by CI for GitHub Pages)
 docs/app/designElectronics.js
 docs/app/designElectronics.wasm
