@@ -282,7 +282,14 @@ void App::drawPartsBin(Rect r) {
     static std::vector<std::string> hay;  // lower-cased search text per built-in entry
     if (hay.size() != lib.size()) {
         hay.clear();
-        for (auto& e : lib) hay.push_back(lower(e.title + "\x1f" + e.type + "\x1f" + e.category));
+        for (auto& e : lib) {
+            std::string t = e.title + "\x1f" + e.type + "\x1f" + e.category;
+            // part numbers are how people search: "NE555" should find the 555 timer
+            Props m = mergedProps(e.type, e.props);
+            auto part = m.find("part");
+            if (part != m.end()) t += "\x1f" + part->second;
+            hay.push_back(lower(t));
+        }
     }
     std::vector<int> shown;
     std::string q = lower(search);

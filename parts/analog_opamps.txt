@@ -13,3 +13,15 @@ replaces  = yes
 aliases   = LM2904, LM358A, LM358B, LM2904B, LM158, LM258
 sim       = opamp
 simParams = VCC=VCC;GND=GND;HI=1.5;LO=0.02;OA 1IN+,1IN->1OUT;OA 2IN+,2IN->2OUT
+
+# HG5532 (华冠) is a Chinese NE5532/SE5532 clone: same DIP-8 pinout, ±3…±20 V,
+# low noise for audio. Datasheet link points at the TI NE5532 reference data.
+[HG5532]
+title     = Dual Low-Noise Op-Amp
+category  = Analog ICs
+desc      = Dual low-noise audio op-amp, pin- and spec-compatible with the NE5532/SE5532 (±3…±20 V). Simulated (high-gain amplifier with output limits).
+datasheet = https://www.ti.com/lit/ds/symlink/ne5532.pdf
+package   = DIP-8, SOIC-8, TSSOP-8
+pins      = 1OUT 1IN- 1IN+ V- 2IN+ 2IN- 2OUT V+
+sim       = opamp
+simParams = VCC=V+;GND=V-;HI=1.5;LO=1.5;OA 1IN+,1IN->1OUT;OA 2IN+,2IN->2OUT

@@ -110,6 +110,21 @@ private:
         }
         fail("no part " + ref.dump() + " in the design (use get_design to list parts)");
     }
+    // Tiled carrier breadboards (the HUST EIC Lesson board) name their holes
+    // <tile><row><column>, e.g. 3j14, and their power rows 3u1 / 3l50.
+    struct TiledHoles { int tiles = 0, cols = 0, rowPins = 0; };
+    static TiledHoles tiledHoles(const std::vector<PinDef>& pins) {
+        TiledHoles t;
+        for (auto& pin : pins) {
+            const std::string& id = pin.id;
+            if (id.size() < 3 || id[0] < '1' || id[0] > '9') continue;
+            int n = std::atoi(id.c_str() + 2);
+            t.tiles = std::max(t.tiles, id[0] - '0');
+            if (id[1] == 'u' || id[1] == 'l') t.rowPins = std::max(t.rowPins, n);
+            else t.cols = std::max(t.cols, n);
+        }
+        return t;
+    }
     static int findPin(const PartInst& p, const Json& ref) {
         const auto& pins = p.def->pins;
         std::string tok = ref.isString() ? ref.str() : ref.dump();
@@ -129,6 +144,12 @@ private:
                 if (pin.id[0] == 'a') cols = std::max(cols, std::atoi(pin.id.c_str() + 1));
                 if (pin.id.rfind("tp", 0) == 0) rail = std::max(rail, std::atoi(pin.id.c_str() + 2));
             }
+            TiledHoles t = tiledHoles(pins);
+            if (t.tiles)
+                fail("breadboard " + p.label + " has no hole '" + tok + "'. Hole ids are <tile><row><column>: 1a1…" +
+                     std::to_string(t.tiles) + "j" + std::to_string(t.cols) + " for the field holes (rows a–e and f–j, the tile "
+                     "number leads); the segmented power rows are 1u1…" + std::to_string(t.tiles) + "u" + std::to_string(t.rowPins) +
+                     " (top edge) and 1l1…" + std::to_string(t.tiles) + "l" + std::to_string(t.rowPins) + " (bottom edge), numbered left to right");
             fail("breadboard " + p.label + " has no hole '" + tok + "'. Holes are a1…j" + std::to_string(cols) +
                  (rail ? "; power rails are tp1…tp" + std::to_string(rail) + ", tn1…tn" + std::to_string(rail) + ", bp1…bp" + std::to_string(rail) +
                              ", bn1…bn" + std::to_string(rail) + " (rail holes are numbered on their own, not by column)"
@@ -385,6 +406,9 @@ Json Server::callImpl(const std::string& name, const Json& a) {
         for (auto& e : partLibrary()) {
             if (!cat.empty() && lower(e.category) != cat) continue;
             std::string hay = lower(e.title + " " + e.type + " " + e.category);
+            Props mp = mergedProps(e.type, e.props);  // part numbers are searchable too ("NE555")
+            auto pt = mp.find("part");
+            if (pt != mp.end()) hay += " " + lower(pt->second);
             bool ok = true;
             for (auto& w : words) if (hay.find(w) == std::string::npos) ok = false;
             if (!ok) continue;
@@ -435,8 +459,16 @@ Json Server::callImpl(const std::string& name, const Json& a) {
         }
         j.set("propertyDefinitions", defs);
         if (d->isBreadboard) {
-            j.set("pins", "Holes a1…j" + std::to_string(d->pins.size() > 400 ? 63 : d->pins.size() > 200 ? 30 : 17) +
-                              " (a–e and f–j columns connected); rails tp/tn (top +/−) and bp/bn (bottom +/−) numbered from 1.");
+            TiledHoles t = tiledHoles(d->pins);
+            if (t.tiles)
+                j.set("pins", "Hole ids are <tile><row><column>: 1a1…" + std::to_string(t.tiles) + "j" + std::to_string(t.cols) +
+                                  " (a column's 5 holes above the channel and 5 below it are one net each, the two fields are separate); "
+                                  "the segmented power rows are 1u1…" + std::to_string(t.tiles) + "u" + std::to_string(t.rowPins) +
+                                  " (top) and 1l1…" + std::to_string(t.tiles) + "l" + std::to_string(t.rowPins) +
+                                  " (bottom), ten 5-hole blocks wired 3-4-3 into three separate nets.");
+            else
+                j.set("pins", "Holes a1…j" + std::to_string(d->pins.size() > 400 ? 63 : d->pins.size() > 200 ? 30 : 17) +
+                                  " (a–e and f–j columns connected); rails tp/tn (top +/−) and bp/bn (bottom +/−) numbered from 1.");
         } else {
             j.set("pins", pinList(*d));
         }

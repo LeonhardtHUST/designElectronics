@@ -69,6 +69,23 @@ void partDataTests(int& failures) {
     auto problems = checkPartData();
     for (size_t i = 0; i < problems.size() && i < 40; i++) printf("    %s\n", problems[i].c_str());
     check(problems.empty(), "every data part fits its packages, with no overlapping pads", failures);
+    {   // the lesson breadboard's holes sit on the 0.1" grid, so a part dropped on the
+        // grid always lands in a hole (a half-pitch offset here breaks every IC)
+        PartDefPtr bb = getPartDef("breadboard", {{"size", "HUST EIC Lesson"}});
+        PartDefPtr ic = getPartDef("74hc00", {});
+        int offGrid = 0, inHole = 0;
+        for (auto& pin : bb->pins) {
+            float gx = pin.pos[BB].x / 100.f, gy = pin.pos[BB].y / 100.f;
+            if (std::fabs(gx - std::round(gx)) > 1e-3f || std::fabs(gy - std::round(gy)) > 1e-3f) offGrid++;
+        }
+        for (auto& pin : ic->pins) {  // DIP dropped at (300, 700) straddles the channel
+            Vec2 at{300 + pin.pos[BB].x, 700 + pin.pos[BB].y};
+            for (auto& hole : bb->pins)
+                if (dist(hole.pos[BB], at) < 1) { inHole++; break; }
+        }
+        printf("  lesson breadboard: %d holes off grid, %d/%d IC legs in holes\n", offGrid, inHole, (int)ic->pins.size());
+        check(offGrid == 0 && inHole == (int)ic->pins.size(), "IC legs land in the breadboard holes", failures);
+    }
     {   // an SMD chip and an SMD resistor on a board: route, DRC, Gerber paste layer
         TB t;
         int board = t.add("pcb_board", {{"width", "40"}, {"height", "30"}});
@@ -145,6 +162,129 @@ int simTests(int& failures) {
         float a = r.brightness.count(la) ? r.brightness[la] : 0, b = r.brightness.count(lb) ? r.brightness[lb] : 0;
         printf("  74HC08: 1&1 -> LED %.2f, 1&0 -> LED %.2f\n", a, b);
         check(a > 0.3f && b < 0.05f, "logic gates follow their truth table", failures);
+    }
+    {   // 74HC03 open-drain NAND: a gate that is "off" lets the pull-up do the work
+        TB t;
+        int esp = t.add("esp32_devkit", {{"outputs", "GPIO4=HIGH"}});
+        int g = t.add("74hc03");
+        int pu1 = t.add("resistor", {{"resistance", "10kΩ"}}), pu2 = t.add("resistor", {{"resistance", "10kΩ"}});
+        int mm1 = t.add("multimeter"), mm2 = t.add("multimeter");
+        t.wire(esp, "3V3", g, "VCC"); t.wire(esp, "GND", g, "GND");
+        t.wire(esp, "GPIO4", g, "1A"); t.wire(esp, "GPIO4", g, "1B");   // 1Y pulls low
+        t.wire(esp, "GPIO4", g, "2A"); t.wire(esp, "GND", g, "2B");     // 2Y lets go
+        t.wire(esp, "3V3", pu1, "pin0"); t.wire(pu1, "pin1", g, "1Y");
+        t.wire(esp, "3V3", pu2, "pin0"); t.wire(pu2, "pin1", g, "2Y");
+        t.wire(mm1, "V+", g, "1Y"); t.wire(mm1, "COM", esp, "GND");
+        t.wire(mm2, "V+", g, "2Y"); t.wire(mm2, "COM", esp, "GND");
+        Connectivity cn; cn.build(t.d);
+        SimResult r = simulate(t.d, cn, {}, 0.05);
+        double low = std::atof(r.meterText[mm1].c_str()), high = std::atof(r.meterText[mm2].c_str());
+        printf("  74HC03: inputs 1&1 -> %s, released -> %s\n", r.meterText[mm1].c_str(), r.meterText[mm2].c_str());
+        check(low < 0.6 && high > 2.5, "open-drain output only pulls low", failures);
+    }
+    {   // CD40192: preset 5 with ~PL held low
+        TB t;
+        int esp = t.add("esp32_devkit", {{"outputs", "3V3=HIGH"}});
+        int c = t.add("cd40192");
+        int mm = t.add("multimeter");
+        t.wire(esp, "3V3", c, "VDD"); t.wire(esp, "GND", c, "VSS");
+        t.wire(esp, "GND", c, "~PL");
+        t.wire(esp, "3V3", c, "J1"); t.wire(esp, "GND", c, "J2");
+        t.wire(esp, "3V3", c, "J3"); t.wire(esp, "GND", c, "J4");   // J = 0101 -> 5
+        t.wire(mm, "V+", c, "Q3"); t.wire(mm, "COM", esp, "GND");
+        Connectivity cn; cn.build(t.d);
+        SimResult r = simulate(t.d, cn, {}, 0.05);
+        double v = std::atof(r.meterText[mm].c_str());
+        printf("  CD40192 preset 5: Q3 = %s (expected ~3.3 V)\n", r.meterText[mm].c_str());
+        check(v > 2.5, "CD40192 loads its preset inputs", failures);
+    }
+    {   // CD40192 carry/borrow: low at the terminal count only while that clock is low
+        TB t;
+        int esp = t.add("esp32_devkit", {{"outputs", "3V3=HIGH"}});
+        int c1 = t.add("cd40192"), c2 = t.add("cd40192"), c3 = t.add("cd40192"), c4 = t.add("cd40192");
+        int m1 = t.add("multimeter"), m2 = t.add("multimeter"), m3 = t.add("multimeter"), m4 = t.add("multimeter");
+        auto preset = [&](int c, const char* j1, const char* j4) {  // J1..J4 = j1 0 0 j4
+            t.wire(esp, "3V3", c, "VDD"); t.wire(esp, "GND", c, "VSS");
+            t.wire(esp, "GND", c, "~PL");
+            t.wire(esp, j1, c, "J1"); t.wire(esp, "GND", c, "J2");
+            t.wire(esp, "GND", c, "J3"); t.wire(esp, j4, c, "J4");
+        };
+        preset(c1, "3V3", "3V3");  // 9
+        preset(c2, "3V3", "3V3");
+        preset(c3, "GND", "GND");  // 0
+        preset(c4, "GND", "GND");
+        t.wire(esp, "3V3", c1, "UP");  // up clock parked high: ~CARRY high
+        t.wire(esp, "GND", c2, "UP");  // parked low: ~CARRY pulses low
+        t.wire(esp, "GND", c3, "DOWN");  // down clock parked low: ~BORROW low
+        t.wire(esp, "3V3", c4, "DOWN");  // parked high: ~BORROW high
+        t.wire(m1, "V+", c1, "CARRY"); t.wire(m1, "COM", esp, "GND");
+        t.wire(m2, "V+", c2, "CARRY"); t.wire(m2, "COM", esp, "GND");
+        t.wire(m3, "V+", c3, "BORROW"); t.wire(m3, "COM", esp, "GND");
+        t.wire(m4, "V+", c4, "BORROW"); t.wire(m4, "COM", esp, "GND");
+        Connectivity cn; cn.build(t.d);
+        SimResult r = simulate(t.d, cn, {}, 0.05);
+        double hi = std::atof(r.meterText[m1].c_str()), lo = std::atof(r.meterText[m2].c_str());
+        double blo = std::atof(r.meterText[m3].c_str()), bhi = std::atof(r.meterText[m4].c_str());
+        printf("  CD40192 at 9: ~CARRY %s/%s, at 0: ~BORROW %s/%s (clock high/low)\n", r.meterText[m1].c_str(),
+               r.meterText[m2].c_str(), r.meterText[m3].c_str(), r.meterText[m4].c_str());
+        check(hi > 2.5 && lo < 0.6 && blo < 0.6 && bhi > 2.5, "CD40192 carry and borrow pulse with the clock", failures);
+    }
+    {   // CD40192 counting: Q1 toggles at half the clock rate
+        TB t;
+        int esp = t.add("esp32_devkit", {{"outputs", "3V3=HIGH, GPIO2=BLINK:500"}});
+        int c = t.add("cd40192");
+        int r = t.add("resistor", {{"resistance", "220Ω"}}), led = t.add("led");
+        t.wire(esp, "3V3", c, "VDD"); t.wire(esp, "GND", c, "VSS");
+        t.wire(esp, "3V3", c, "~PL"); t.wire(esp, "3V3", c, "DOWN");
+        t.wire(esp, "GPIO2", c, "UP");
+        t.wire(c, "Q1", r, "pin0"); t.wire(r, "pin1", led, "anode"); t.wire(led, "cathode", esp, "GND");
+        Connectivity cn; cn.build(t.d);
+        Simulator sim;
+        float prev = -1;
+        int flips = 0;
+        for (int i = 0; i < 300; i++) {
+            SimResult s = sim.step(t.d, cn, {}, 0.01);
+            float b = s.brightness.count(led) ? s.brightness[led] : 0;
+            if (prev >= 0 && std::fabs(b - prev) > 0.05f) flips++;
+            prev = b;
+        }
+        printf("  CD40192 counting: Q1 toggled %d times in 3 s\n", flips);
+        check(flips >= 2, "CD40192 counts up on the clock", failures);
+    }
+    {   // two CD40192s cascaded CARRY -> UP: the tens digit ticks once per ten clocks
+        TB t;
+        int esp = t.add("esp32_devkit", {{"outputs", "3V3=HIGH, GPIO2=BLINK:100"}});
+        int ones = t.add("cd40192"), tens = t.add("cd40192");
+        for (int c : {ones, tens}) {
+            t.wire(esp, "3V3", c, "VDD"); t.wire(esp, "GND", c, "VSS"); t.wire(esp, "3V3", c, "~PL");
+        }
+        t.wire(esp, "GPIO2", ones, "UP");
+        t.wire(ones, "CARRY", tens, "UP");
+        int q[4], o[4];
+        for (int i = 0; i < 4; i++) {
+            q[i] = t.add("multimeter");
+            t.wire(q[i], "V+", tens, std::string("Q") + std::to_string(i + 1));
+            t.wire(q[i], "COM", esp, "GND");
+            o[i] = t.add("multimeter");
+            t.wire(o[i], "V+", ones, std::string("Q") + std::to_string(i + 1));
+            t.wire(o[i], "COM", esp, "GND");
+        }
+        Connectivity cn; cn.build(t.d);
+        Simulator sim;
+        auto val = [](const std::string& s) { return std::atof(s.c_str()) > 1.5 ? 1 : 0; };
+        int early = -1, later = -1, onesEarly = -1, onesLater = -1;
+        for (int i = 0; i < 240; i++) {
+            SimResult s = sim.step(t.d, cn, {}, 0.01);
+            auto n = [&](int id) { return val(s.meterText.count(id) ? s.meterText[id] : "0"); };
+            auto bits = [&](int* m) { return n(m[0]) + 2 * n(m[1]) + 4 * n(m[2]) + 8 * n(m[3]); };
+            if (i == 104) { early = bits(q); onesEarly = bits(o); }
+            if (i == 215) { later = bits(q); onesLater = bits(o); }
+        }
+        // between the two samples the ones digit advances 5-6 counts, so the tens
+        // digit must advance exactly once — and not on every clock
+        int dOnes = (onesLater - onesEarly + 10) % 10, dTens = later - early;
+        printf("  CD40192 cascade: ones %d->%d, tens %d->%d in 1.1 s\n", onesEarly, onesLater, early, later);
+        check(dOnes >= 4 && dOnes <= 6 && dTens == 1, "cascaded counters tick once per ten clocks", failures);
     }
     {   // LM358 non-inverting amplifier, gain 2
         TB t;

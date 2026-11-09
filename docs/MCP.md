@@ -66,7 +66,7 @@ Then ask things like:
 | `add_part` | Add a part. Without `x`/`y` (mils) parts fill tidy rows in every view. Returns its pins. |
 | `set_part_properties` | Change values, colours, labels, a dev board's `outputs` (e.g. `GPIO2=BLINK:500`) or its program (`properties.code` = an Arduino sketch that runs in the simulator); hide a part in some views or lock it. |
 | `move_part` | Move, rotate or flip a part in one view. |
-| `place_on_breadboard` | Plug a part in so a given pin sits in a given hole (`a1`…`j30`, rails `tp1`/`tn1`/`bp1`/`bn1`); reports the hole each pin landed in and what it now connects to, and warns about pins on a power rail, off the board or shorted together. |
+| `place_on_breadboard` | Plug a part in so a given pin sits in a given hole (`a1`…`j30`, rails `tp1`/`tn1`/`bp1`/`bn1`; on the HUST EIC Lesson carrier `1a1`…`4j60` for the field holes and `1u1`…`4u50` / `1l1`…`4l50` for the segmented power rows, the leading digit being the tile); reports the hole each pin landed in and what it now connects to, and warns about pins on a power rail, off the board or shorted together. |
 | `remove_part` / `remove_wire` | Delete things. |
 | `connect` | Wire two pins (schematic + breadboard by default). Connections count in every view. |
 | `simulate` | Run the simulator: LED brightness, display segments, meter readings, motor activity, damaged parts, warnings, net voltages, plus each board's Serial output and program errors. |

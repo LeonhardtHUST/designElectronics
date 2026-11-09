@@ -796,7 +796,7 @@ void makeIcDip(PartDef& d, const Props& p) {
 void make555(PartDef& d, const Props& p) {
     (void)p;
     d.title = "555 Timer";
-    d.description = "The classic NE555 timer for oscillators, delays and PWM.";
+    d.description = "The classic NE555 timer for oscillators, delays and PWM. Datasheet: https://www.ti.com/lit/ds/symlink/ne555.pdf";
     d.valueProp = "part";
     d.propDefs = {{"part", "Part #", {"NE555", "LM555", "TLC555"}}};
     makeDip(d, 8, "555", {"GND", "TRIG", "OUT", "RESET", "CTRL", "THR", "DIS", "VCC"});
@@ -1147,8 +1147,135 @@ void makeArduinoUno(PartDef& d, const Props& p) {
     makeArduinoBoard(d, s);
 }
 
+// ---- HUST EIC lesson kit ----------------------------------------------------
+// Four SYB-120 style 700-point tiles screwed to one green carrier plate. On each
+// tile the central channel splits two 5-row fields (a column's five holes form one
+// net, the two fields are separate), and each long edge carries a segmented 3-4-3
+// power row: ten 5-hole blocks wired as three nets — blocks 1-3, 4-7 and 8-10.
+// Pin ids carry the tile number: 1j1…4j60 / 1a1…4a60 are the field holes, the edge
+// rows are 1u1…4u50 (top) and 1l1…4l50 (bottom), numbered left to right.
+void makeHustBreadboard(PartDef& d) {
+    const int kCols = 60, kTiles = 4, kRowPins = 50;
+    const float P = 100;          // 2.54 mm hole pitch
+    const float kEdgeX = 500;     // first power-row hole: column 6, so the row is centred
+    // every hole sits on a multiple of P from the part origin, so a part dropped on
+    // the 0.1" grid always lands in a hole
+    const float kFieldTop = 300;  // top field rows j…f
+    const float kGrooveY = 780;   // central channel
+    const float kFieldBot = 1000; // bottom field rows e…a
+    const float kEdgeBot = 1700;  // bottom power row
+    const float kTileTop = -220, kTileBot = 1920, kPitch = 2300;
+
+    d.title = "HUST EIC Lesson";
+    d.labelPrefix = "BB";
+    d.isBreadboard = true;
+    d.views = 1u << BB;
+    d.description =
+        "HUST EIC lab breadboard: four SYB-120 style 700-point tiles on one green carrier plate. On a tile the channel "
+        "separates two 5-row fields — each column of 5 holes is one net (a–e below the channel, f–j above) and the two "
+        "fields are not joined. Each long edge has a segmented power row of ten 5-hole blocks laid out 3-4-3: blocks 1-3 "
+        "(pins 1-15), 4-7 (16-35) and 8-10 (36-50) are three separate nets. Pin ids start with the tile number: 1j1-4j60, "
+        "1a1-4a60, top row 1u1-4u50, bottom row 1l1-4l50.";
+    d.propDefs = {{"size", "Size", {"half+", "full+", "mini", "HUST EIC Lesson"}}};
+
+    G bb{d.gfx[BB]};
+    const uint32_t plateFill = rgba(28, 118, 80), plateEdge = rgba(15, 80, 55);
+    const uint32_t tileFill = rgba(238, 238, 232), tileEdge = rgba(203, 203, 195);
+    const uint32_t grooveFill = rgba(209, 209, 201), grooveEdge = rgba(186, 186, 178);
+    const uint32_t holeFill = rgba(74, 74, 74), ink = rgba(126, 126, 120);
+
+    bb.rect(-480, -520, 7920, (kTiles - 1) * kPitch + kTileBot + 1020, plateFill, plateEdge, 10, 80);
+    const float bodyX = -230, bodyW = 6360;
+    for (int t = 0; t < kTiles; t++) {
+        float y0 = t * kPitch;  // top power row of this tile
+        bb.rect(bodyX, y0 + kTileTop, bodyW, kTileBot - kTileTop, tileFill, tileEdge, 6, 24);
+        bb.rect(bodyX + 40, y0 + kGrooveY, bodyW - 80, 140, grooveFill, grooveEdge, 4, 18);
+        bb.rect(bodyX + 80, y0 + kGrooveY + 50, bodyW - 160, 40, rgba(196, 196, 188));
+        // raised strip behind each power row
+        for (int s = 0; s < 2; s++) {
+            float y = y0 + (s ? kEdgeBot : 0.f);
+            bb.rect(kEdgeX - 90, y - 62, (kRowPins - 1) * P + 180, 124, rgba(230, 230, 222), 0, 0, 26);
+        }
+    }
+
+    // holes: field columns first, then the segmented power rows
+    auto addHole = [&](const std::string& id, const std::string& name, Vec2 pos) {
+        addPin(d, id, name, pos, pos, pos);
+        bb.rect(pos.x - 17, pos.y - 17, 34, 34, holeFill, 0, 0, 3);
+        return (int)d.pins.size() - 1;
+    };
+    for (int t = 0; t < kTiles; t++) {
+        float y0 = t * kPitch;
+        std::string tile = std::to_string(t + 1);
+        for (int c = 0; c < kCols; c++) {
+            std::string col = std::to_string(c + 1);
+            std::vector<int> top, bot;
+            for (int r = 0; r < 5; r++) {
+                std::string a(1, "jihgf"[r]), b(1, "edcba"[r]);
+                top.push_back(addHole(tile + a + col, a + col, {c * P, y0 + kFieldTop + r * P}));
+                bot.push_back(addHole(tile + b + col, b + col, {c * P, y0 + kFieldBot + r * P}));
+            }
+            d.buses.push_back(top);  // one net per column, above the channel
+            d.buses.push_back(bot);  // one net per column, below the channel
+        }
+        for (int s = 0; s < 2; s++) {
+            float y = y0 + (s ? kEdgeBot : 0.f);
+            std::vector<std::vector<int>> nets(3);
+            for (int i = 0; i < kRowPins; i++) {
+                int net = i < 15 ? 0 : i < 35 ? 1 : 2;  // the 3-4-3 split
+                std::string id = tile + (s ? "l" : "u") + std::to_string(i + 1);
+                std::string name = std::string(s ? "bot " : "top ") + std::to_string(i + 1);
+                nets[net].push_back(addHole(id, name, {kEdgeX + i * P, y}));
+                int blk = (i + 1) / 5;  // 1…10, the block this hole closes
+                if ((i + 1) % 5 == 0 && i + 1 < kRowPins) {
+                    // block dividers; the two between the 3-4-3 groups are wider because
+                    // there the row changes net
+                    bool groupBreak = blk == 3 || blk == 7;
+                    float bw = groupBreak ? 26.f : 16.f;
+                    bb.rect(kEdgeX + i * P + 50 - bw / 2, y - 58, bw, 116, groupBreak ? rgba(172, 172, 164) : rgba(206, 206, 198), 0, 0, bw / 2);
+                }
+            }
+            for (auto& n : nets) d.buses.push_back(n);
+        }
+    }
+
+    // markings: column numbers every 5 holes, row letters at both ends, screws
+    for (int t = 0; t < kTiles; t++) {
+        float y0 = t * kPitch;
+        for (int c = 0; c < kCols; c += 5) {
+            std::string n = std::to_string(c + 1);
+            bb.text(c * P, y0 - 118, n, 56, ink);
+            bb.text(c * P, y0 + kEdgeBot + 130, n, 56, ink);
+        }
+        for (int r = 0; r < 5; r++) {
+            bb.text(-115, y0 + kFieldTop + r * P, std::string(1, "jihgf"[r]), 52, ink);
+            bb.text(6015, y0 + kFieldTop + r * P, std::string(1, "jihgf"[r]), 52, ink);
+            bb.text(-115, y0 + kFieldBot + r * P, std::string(1, "edcba"[r]), 52, ink);
+            bb.text(6015, y0 + kFieldBot + r * P, std::string(1, "edcba"[r]), 52, ink);
+        }
+        // tile number, so pin ids like 3j14 can be read off the board
+        bb.text(-115, y0 + 1470, "T" + std::to_string(t + 1), 58, rgba(108, 108, 102));
+        for (float sx : {-115.f, 6015.f}) {
+            for (float sy : {60.f, 1640.f}) {
+                bb.circle(sx, y0 + sy, 38, rgba(212, 210, 202), rgba(150, 148, 140), 5);
+                bb.line(sx - 20, y0 + sy - 20, sx + 20, y0 + sy + 20, 5, rgba(160, 158, 150));
+            }
+        }
+    }
+
+    // carrier plate: mounting holes and silkscreen down the right-hand margin
+    for (int k = 0; k < 6; k++)
+        bb.circle(k % 2 ? 6840 : 6600, 700 + k * 1300, 56, rgba(18, 92, 63), rgba(11, 66, 46), 8);
+    bb.text(6700, 300, "HUST EIC", 86, rgba(228, 240, 232));
+    bb.text(6700, 390, "LESSON", 46, rgba(190, 214, 200));
+}
+
 void makeBreadboard(PartDef& d, const Props& p) {
     std::string size = prop(p, "size", "half+");
+    if (size == "HUST EIC Lesson") {
+        makeHustBreadboard(d);
+        return;
+    }
     int cols = size == "full+" ? 63 : size == "mini" ? 17 : 30;
     bool rails = size != "mini";
     d.title = size == "full+" ? "Full+ Breadboard" : size == "mini" ? "Mini Breadboard" : "Half+ Breadboard";
@@ -1156,7 +1283,7 @@ void makeBreadboard(PartDef& d, const Props& p) {
     d.labelPrefix = "BB";
     d.isBreadboard = true;
     d.views = 1u << BB;
-    d.propDefs = {{"size", "Size", {"half+", "full+", "mini"}}};
+    d.propDefs = {{"size", "Size", {"half+", "full+", "mini", "HUST EIC Lesson"}}};
     const char* rowsTop = "jihgf";
     const char* rowsBot = "edcba";
     float yTop0 = rails ? 300 : 0;
@@ -1393,6 +1520,7 @@ const std::vector<LibEntry>& partLibrary() {
         add("breadboard", "Half+ Breadboard", {{"size", "half+"}});
         add("breadboard", "Full+ Breadboard", {{"size", "full+"}});
         add("breadboard", "Mini Breadboard", {{"size", "mini"}});
+        add("breadboard", "HUST EIC Lesson", {{"size", "HUST EIC Lesson"}});
         add("header_male", "Pin Header");
         add("header_female", "Female Header");
         add("connector", "2×5 Header (odd/even)");

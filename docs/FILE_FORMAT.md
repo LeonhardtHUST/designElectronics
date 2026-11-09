@@ -167,7 +167,7 @@ bare flags and `ITEM args` lines. A pin is given by its 1-based number, its name
 
 | `sim` | `simParams` example | Behaviour |
 | --- | --- | --- |
-| `logic` | `VCC=14;GND=7;NAND 1,2>3;NOT 5>6;ROUT=50` | Digital gates: `AND OR NAND NOR XOR XNOR NOT BUF` (inputs `>` output), Schmitt `SNOT SNAND`, tri-state `TRI a,oe>y`, `DFF d,clk,pre,clr>q,qn` (active-low), `DFFH` (active-high set/reset), `CNT clk,clr>qa..qd`, `SR595 ser,srclk,rclk,srclr,oe>qa..qh,qh'`, `J4017 clk,inh,rst>q0..q9,co`, `DEC138 a,b,c,g1,g2a,g2b>y0..y7`, `BCD7 a,b,c,d,lt,bl,le>a..g`, `MUX s0,s1,s2,e,z>y0..y7`, `SW ctrl>a,b`. Inputs above ½ VCC read HIGH; outputs drive to the rails through `ROUT` Ω. |
+| `logic` | `VCC=14;GND=7;NAND 1,2>3;NOT 5>6;ROUT=50` | Digital gates: `AND OR NAND NOR XOR XNOR NOT BUF` (inputs `>` output), Schmitt `SNOT SNAND`, open-drain `ODNAND a,b>y` / `ODINV a>y` / `ODBUF a>y` (pull low or let go — add a pull-up), tri-state `TRI a,oe>y`, `DFF d,clk,pre,clr>q,qn` (active-low), `DFFH` (active-high set/reset), `CNT clk,clr>qa..qd`, `CNTUD up,down,~pl,reset,j1..j4>q1..q4,carry,borrow` (CD40192 BCD up/down counter), `SR595 ser,srclk,rclk,srclr,oe>qa..qh,qh'`, `J4017 clk,inh,rst>q0..q9,co`, `DEC138 a,b,c,g1,g2a,g2b>y0..y7`, `BCD7 a,b,c,d,lt,bl,le>a..g`, `MUX s0,s1,s2,e,z>y0..y7`, `SW ctrl>a,b`. Inputs above ½ VCC read HIGH; outputs drive to the rails through `ROUT` Ω. |
 | `opamp` | `VCC=8;GND=4;HI=1.5;LO=0.02;OA 3,2>1` | High-gain amplifier (`OA in+,in->out`) limited to `VCC−HI … GND+LO`. |
 | `comparator` | `VCC=8;GND=4;CMP 3,2>1` | Open-collector output pulls LOW when in+ < in−. |
 | `555` | `U GND=1,TRIG=2,OUT=3,RESET=4,CTRL=5,THR=6,DIS=7,VCC=8` | 555 timer (repeat `U` for a 556). |

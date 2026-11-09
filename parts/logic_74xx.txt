@@ -28,15 +28,28 @@ aliases   = 7402, 74HCT02, 74LS02, 74LS28
 sim       = logic
 simParams = VCC=VCC;GND=GND;NOR 1A,1B>1Y;NOR 2A,2B>2Y;NOR 3A,3B>3Y;NOR 4A,4B>4Y
 
+[74HC03]
+title     = Quad 2-Input NAND (Open Drain)
+category  = Logic
+desc      = Four 2-input NAND gates whose outputs only pull low — tie several to one wire for a wired-AND and hold it high with a pull-up resistor. Simulated as digital logic.
+datasheet = https://www.ti.com/lit/ds/symlink/sn74hc03.pdf
+package   = DIP-14, SOIC-14, TSSOP-14
+pins      = 1A 1B 1Y 2A 2B 2Y GND 3Y 3A 3B 4Y 4A 4B VCC
+aliases   = 74HCT03, 74AHC03, 74LV03
+sim       = logic
+simParams = VCC=VCC;GND=GND;ODNAND 1A,1B>1Y;ODNAND 2A,2B>2Y;ODNAND 3A,3B>3Y;ODNAND 4A,4B>4Y
+
 [74LS03]
 title     = Quad 2-Input NAND (Open Collector)
 category  = Logic
-desc      = Four 2-input NAND gates with open-collector outputs.
+desc      = Four 2-input NAND gates with open-collector outputs — wire the outputs together and pull the shared line high with a resistor. Simulated as digital logic.
 datasheet = https://www.ti.com/lit/ds/symlink/sn74ls03.pdf
 package   = DIP-14, SOIC-14, TSSOP-14
 pins      = 1A 1B 1Y 2A 2B 2Y GND 3Y 3A 3B 4Y 4A 4B VCC
 ids       = numbers
 aliases   = 7401, 7403, 7439
+sim       = logic
+simParams = VCC=VCC;GND=GND;ODNAND 1A,1B>1Y;ODNAND 2A,2B>2Y;ODNAND 3A,3B>3Y;ODNAND 4A,4B>4Y
 
 [74HC04]
 title     = Hex Inverter

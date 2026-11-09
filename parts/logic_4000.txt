@@ -299,6 +299,18 @@ pins      = PE Q4 J4 J1 ~CI Q1 ~CO VSS B/~D U/~D Q2 J2 J3 Q3 CLK VDD
 ids       = numbers
 aliases   = 4029, HEF4029B, MC1029B
 
+[CD40192]
+title     = Presettable BCD Up/Down Counter
+category  = Logic
+desc      = Decade up/down counter (0-9) with separate up and down clocks, asynchronous preset (J1-J4 loaded while ~PL is low) and reset. CARRY and BORROW pulse low for the half clock cycle at the terminal count, so they can clock the next package directly when cascading. Q1 is the least-significant bit. Simulated as digital logic.
+datasheet = https://www.ti.com/lit/ds/symlink/cd40192b.pdf
+package   = DIP-16, SOIC-16, TSSOP-16
+pins      = J2 Q2 Q1 DOWN UP Q3 Q4 VSS J4 J3 ~PL CARRY BORROW RESET J1 VDD
+sch       = left: UP DOWN ~PL RESET J1 J2 J3 J4; right: Q1 Q2 Q3 Q4 CARRY BORROW; top: VDD; bottom: VSS
+aliases   = 40192, HEF40192B, HCF40192B, MC14192B
+sim       = logic
+simParams = VCC=VDD;GND=VSS;ROUT=300;CNTUD UP,DOWN,~PL,RESET,J1,J2,J3,J4>Q1,Q2,Q3,Q4,CARRY,BORROW
+
 [CD4046]
 title     = Phase-Locked Loop
 category  = Logic

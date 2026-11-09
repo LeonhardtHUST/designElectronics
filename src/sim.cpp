@@ -946,6 +946,27 @@ SimResult Simulator::step(const Document& doc, const Connectivity& conn, const s
                             } else if (K == "NOT" || K == "SNOT" || K == "BUF") {
                                 bool v = level(0, K == "SNOT");
                                 if (!lv.empty()) lv[0] = L(K == "BUF" ? v : !v);
+                            } else if (K == "ODNAND" || K == "ODINV" || K == "ODBUF") {
+                                // Open drain: the output only pulls low, otherwise it lets go.
+                                // A pull-up (or another gate sharing the wire) makes the high level.
+                                if (ins.empty()) continue;
+                                bool low;
+                                if (K == "ODNAND") {
+                                    low = true;
+                                    for (size_t i = 0; i < ins.size(); i++) low = low && level(i, false);
+                                } else if (K == "ODINV") low = level(0, false);
+                                else low = !level(0, false);
+                                if (!lv.empty()) lv[0] = low ? 2 : 0;
+                            } else if (K == "CNTUD" && ins.size() == 8) {
+                                // CD40192: BCD up/down counter. Outputs Q1..Q4, ~CARRY, ~BORROW.
+                                int c = ps.B(base + 1);
+                                for (size_t o = 0; o < 4 && o < lv.size(); o++) lv[o] = L(((c >> o) & 1) != 0);
+                                // Carry/borrow are low for the half clock cycle that starts when the
+                                // counter sits at its terminal count: the rising edge at the end of the
+                                // pulse is what clocks the next package (cascading straight from CARRY).
+                                auto clockLow = [&](size_t i) { return N(p, ins[i]) != FLOAT && !level(i, false); };
+                                if (lv.size() > 4) lv[4] = L(!(c == 9 && clockLow(0)));
+                                if (lv.size() > 5) lv[5] = L(!(c == 0 && clockLow(1)));
                             } else if (K == "TRI") {
                                 if (ins.size() == 2 && !lv.empty()) lv[0] = level(1, false) ? 0 : L(level(0, false));
                             } else if (K == "DEC138" && ins.size() == 6) {
@@ -1036,6 +1057,21 @@ SimResult Simulator::step(const Document& doc, const Connectivity& conn, const s
                         if (edge(1, 0, true)) { int nq = lvl(0) ? 1 : 0; if (ps.B(base + 1) != nq) { ps.B(base + 1) = nq; edges = true; } }
                     } else if (K == "CNT") {
                         if (edge(0, 0, false) && !lvl(1)) { ps.B(base + 1) = (ps.B(base + 1) + 1) & 15; edges = true; }
+                    } else if (K == "CNTUD" && ins.size() == 8) {
+                        bool upE = edge(0, 0, true), dnE = edge(1, 2, true);
+                        // a control pin nobody wired counts as "held high", so a lone clock still runs
+                        auto pinHigh = [&](size_t i) { return N(p, ins[i]) == FLOAT || lvl(i); };
+                        int& c = ps.B(base + 1);
+                        if (lvl(3)) {  // RESET, asynchronous, active high
+                            if (c) { c = 0; edges = true; }
+                        } else if (!pinHigh(2)) {  // PRESET ENABLE low: jam J1…J4
+                            int v = (lvl(4) ? 1 : 0) | (lvl(5) ? 2 : 0) | (lvl(6) ? 4 : 0) | (lvl(7) ? 8 : 0);
+                            if (v > 9) v %= 10;
+                            if (c != v) { c = v; edges = true; }
+                        } else {
+                            if (upE && pinHigh(1)) { c = (c + 1) % 10; edges = true; }
+                            if (dnE && pinHigh(0)) { c = (c + 9) % 10; edges = true; }
+                        }
                     } else if (K == "SR595") {
                         if (edge(1, 0, true)) { ps.B(base + 1) = ((ps.B(base + 1) << 1) | (lvl(0) ? 1 : 0)) & 0xFF; edges = true; }
                         if (edge(2, 3, true)) { ps.B(base + 2) = ps.B(base + 1); edges = true; }
