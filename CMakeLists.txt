@@ -92,6 +92,16 @@ if(NOT ANDROID AND NOT IOS AND NOT EMSCRIPTEN)
 endif()
 target_link_libraries(${DE_TARGET} PRIVATE SDL3_ttf::SDL3_ttf SDL3::SDL3)
 
+# Windows: SDL is linked as a DLL, so copy the runtime next to the executable.
+if(WIN32 AND NOT DE_VENDOR_SDL)
+  add_custom_command(TARGET ${DE_TARGET} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      $<TARGET_FILE:SDL3::SDL3>
+      $<TARGET_FILE:SDL3_ttf::SDL3_ttf>
+      $<TARGET_FILE_DIR:${DE_TARGET}>
+    COMMENT "Copying SDL3 runtime DLLs")
+endif()
+
 if(MSVC)
   target_compile_options(${DE_TARGET} PRIVATE /W3 /utf-8 /D_USE_MATH_DEFINES)
 else()
