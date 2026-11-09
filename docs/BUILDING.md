@@ -42,6 +42,23 @@ built on GitHub Actions (`.github/workflows/build.yml`), which publishes the
 macOS, Windows and Linux downloads when a `v*` tag is pushed. Delete `build/`
 whenever you want a clean slate — nothing in it is needed by the repo.
 
+### Releases
+
+The downloads are built in CI, not on your machine:
+
+```sh
+git tag -a v0.3.0 -m "designElectronics 0.3.0"
+git push origin v0.3.0
+```
+
+That runs the three builds and creates a GitHub release with the archives
+attached. To publish without pushing a tag, start the workflow by hand
+(**Actions ▸ Build ▸ Run workflow**) and type the tag name in the `release`
+field — the run builds every platform and creates the release for that commit.
+Leave the field empty to only build (the archives stay as workflow artifacts).
+The release text comes from `.github/release-notes.md`, so update it before
+tagging.
+
 ### Vendoring SDL (any platform)
 ```sh
 git clone --depth 1 -b release-3.4.x https://github.com/libsdl-org/SDL.git external/SDL
