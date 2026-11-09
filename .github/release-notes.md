@@ -2,6 +2,12 @@ Free, open-source electronics design for desktop and phone: breadboard, schemati
 
 📖 **Documentation:** https://rorretbolt.github.io/designElectronics/ · 🌐 **Try it in your browser:** https://rorretbolt.github.io/designElectronics/#app
 
+## What's new in 0.3
+
+- **HUST EIC Lesson breadboard.** One carrier plate holding four SYB-120 style 700-point tiles, laid out like the boards in the lab. Each tile has two five-row fields split by the central channel — a column's five holes are one net, the two fields are not joined — and a segmented power row along each long edge: ten five-hole blocks wired as three nets (blocks 1-3, 4-7, 8-10). Parts snap into the holes, and the hole ids carry the tile number (`1j1`…`4j60`, edge rows `1u1`…`4u50` and `1l1`…`4l50`).
+- **The lab ICs.** **74HC03** quad open-drain NAND (pulls low or lets go — add a pull-up, it does wired-AND), **CD40192** BCD up/down counter with preset, reset and carry/borrow that pulse for the half clock cycle at the terminal count, so `CARRY` clocks the next package directly, and **HG5532** dual low-noise audio op-amp. Each comes with its datasheet link, aliases and a schematic symbol, and the 555 timer now answers to `NE555` in the part search.
+- **Chips line up with the holes.** Every hole on the lesson breadboard sits on the 0.1 inch grid, so a DIP dropped on the grid lands all its legs in holes instead of straddling them.
+
 ## What's new in 0.2.1
 
 - **AI tab — build circuits by chatting.** Describe a circuit and the AI tool you already have (**Claude Code**; Codex and Gemini CLI experimental; or any custom command) builds it live in the open design: parts, breadboard placement, wiring, Arduino sketches and a simulation check. Every change is undoable, the agent may only use designElectronics' tools, and it runs on your own AI account.
