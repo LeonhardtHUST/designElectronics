@@ -10,6 +10,7 @@ CLAUDE.md
 CLAUDE.local.md
 *.dez.autosave
 .gstack/
+.workbuddy/
 
 # build products: CI builds and uploads these, they never belong in the repo
 dist/
