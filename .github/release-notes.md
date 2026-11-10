@@ -2,6 +2,12 @@ Free, open-source electronics design for desktop and phone: breadboard, schemati
 
 📖 **Documentation:** https://rorretbolt.github.io/designElectronics/ · 🌐 **Try it in your browser:** https://rorretbolt.github.io/designElectronics/#app
 
+## What's new in 0.4
+
+- **Your own components.** Import a `.dezpart` model — name, datasheet, pins, internal connections, silkscreen, a drawing for each view and the simulation model — and it joins the parts bin under **Custom** for every project, not just the one you imported it in. Export any part, built-in ones included, to start from something that already looks right. [Format reference](https://github.com/LeonhardtHUST/designElectronics/blob/main/docs/PART_MODELS.md).
+- **Add a chip from its datasheet.** Paste a short block (`[74HC03]`, `package = DIP-14`, `pins = 1A 1B 1Y …`) and the app builds the package, the pads, the schematic box and the silkscreen for you — no drawing required.
+- **Ask an AI to do it.** Five new MCP tools (`list_part_models`, `get_part_model`, `import_part_model`, `export_part_model`, `delete_part_model`) manage the library from an assistant, and an imported part is usable with `add_part` immediately.
+
 ## What's new in 0.3
 
 - **HUST EIC Lesson breadboard.** One carrier plate holding four SYB-120 style 700-point tiles, laid out like the boards in the lab. Each tile has two five-row fields split by the central channel — a column's five holes are one net, the two fields are not joined — and a segmented power row along each long edge: ten five-hole blocks wired as three nets (blocks 1-3, 4-7, 8-10). Parts snap into the holes, and the hole ids carry the tile number (`1j1`…`4j60`, edge rows `1u1`…`4u50` and `1l1`…`4l50`).
