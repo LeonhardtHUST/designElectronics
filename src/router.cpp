@@ -6,6 +6,7 @@
 #include <unordered_map>
 
 #include "tools.h"
+#include "i18n.h"
 
 namespace {
 
@@ -129,7 +130,7 @@ RouteResult autoroute(Document& doc, const Connectivity& connIn, bool ripUp) {
         g.origin = {std::floor(board.x / kCell) * kCell, std::floor(board.y / kCell) * kCell};
         g.w = (int)std::ceil((board.r() - g.origin.x) / kCell) + 1;
         g.h = (int)std::ceil((board.b() - g.origin.y) / kCell) + 1;
-        if ((long)g.w * g.h > 4000000) { res.message = "Board too large for the autorouter grid."; return res; }
+        if ((long)g.w * g.h > 4000000) { res.message = tr("route.too_large"); return res; }
         g.owner.assign((size_t)(g.w * g.h * 2), -1);
         const int smdLayer = single ? BOTTOM : TOP;  // SMD parts sit on the copper side
         float edge = tw / 2 + clr;
@@ -339,8 +340,7 @@ RouteResult autoroute(Document& doc, const Connectivity& connIn, bool ripUp) {
     conn.build(doc);
     RoutingStatus st;
     conn.ratsnest(doc, PCB, &st);
-    if (st.connectionsToRoute == 0) res.message = "Routing completed: " + std::to_string(res.routed) + " connection(s) routed.";
-    else res.message = "Routed " + std::to_string(res.routed) + " connection(s); " + std::to_string(st.connectionsToRoute) +
-                       " could not be routed. Try moving parts apart, a bigger board, or thinner traces.";
+    if (st.connectionsToRoute == 0) res.message = trf("route.done", {std::to_string(res.routed)});
+    else res.message = trf("route.partial", {std::to_string(res.routed), std::to_string(st.connectionsToRoute)});
     return res;
 }

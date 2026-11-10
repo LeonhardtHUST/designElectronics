@@ -44,7 +44,8 @@ struct SimResult {
     std::map<int, std::string> meterText;     // multimeter display
     std::map<int, float> activity;            // motor/buzzer/relay part id -> 0..1
     std::set<int> damaged;                    // parts beyond their ratings (smoke!)
-    std::vector<std::string> warnings;
+    std::vector<std::string> warnings;        // real problems: drawn in red
+    std::vector<std::string> notes;           // informational ("not simulated"), folded into one line
     // boards running a program (part id ->)
     struct Code {
         bool running = false;

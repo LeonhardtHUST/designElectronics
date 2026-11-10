@@ -3,6 +3,7 @@
 #include <cmath>
 
 #include "app.h"
+#include "i18n.h"
 
 namespace {
 const uint32_t kBgBB = rgba(246, 246, 244), kBgSCH = rgba(255, 255, 255), kBgPCB = rgba(70, 76, 84);
@@ -253,7 +254,7 @@ void App::startDrag() {
             }
             for (auto it = moving.begin(); it != moving.end();) it = doc.part(*it)->locked ? moving.erase(it) : std::next(it);
             if (moving.empty() && pressHit.kind == Hit::PART && doc.part(pressHit.part) && doc.part(pressHit.part)->locked)
-                ui.toast(doc.part(pressHit.part)->label + " is locked — unlock it in the Layers panel to move it.");
+                ui.toast(trf("toast.locked", {doc.part(pressHit.part)->label}));
             for (int id : moving) moveStart[id] = doc.part(id)->place[view].pos;
             for (auto& wr : doc.wires) {
                 if (wr.view != view) continue;
@@ -552,35 +553,36 @@ std::vector<MenuItem> App::contextMenu(const Hit& h) {
     std::vector<MenuItem> m;
     auto item = [](const std::string& l, std::function<void()> a, const std::string& sc = "") { MenuItem i; i.label = l; i.action = a; i.shortcut = sc; return i; };
     if (h.kind == Hit::PART || h.kind == Hit::PIN) {
-        m.push_back(item("Rotate 90° Clockwise", [this]() { rotateSelection(1); }, "R"));
-        m.push_back(item("Rotate 90° Counter-clockwise", [this]() { rotateSelection(-1); }, "⇧R"));
-        m.push_back(item("Flip Horizontal", [this]() { flipSelection(); }, "F"));
+        m.push_back(item(tr("menu.part.rotate_cw"), [this]() { rotateSelection(1); }, "R"));
+        m.push_back(item(tr("menu.part.rotate_ccw"), [this]() { rotateSelection(-1); }, "⇧R"));
+        m.push_back(item(tr("menu.part.flip"), [this]() { flipSelection(); }, "F"));
         m.push_back(MenuItem::sep());
-        m.push_back(item("Duplicate", [this]() { duplicate(); }, "Ctrl+D"));
-        m.push_back(item("Copy", [this]() { copySelection(false); }, "Ctrl+C"));
-        m.push_back(item("Bring to Front", [this]() { bringToFront(true); }));
-        m.push_back(item("Send to Back", [this]() { bringToFront(false); }));
-        m.push_back(item("Export Part Definition…", [this]() { exportFile("part"); }));
+        m.push_back(item(tr("menu.edit.duplicate"), [this]() { duplicate(); }, "Ctrl+D"));
+        m.push_back(item(tr("menu.edit.copy"), [this]() { copySelection(false); }, "Ctrl+C"));
+        m.push_back(item(tr("menu.part.front"), [this]() { bringToFront(true); }));
+        m.push_back(item(tr("menu.part.back"), [this]() { bringToFront(false); }));
+        m.push_back(item(tr("menu.part.export_def"), [this]() { exportFile("part"); }));
         if (const PartInst* hp = doc.part(h.part))
             if (hp->def->sim == "board" || hp->def->sim == "mcu") {
                 int pid = hp->id;
                 m.insert(m.begin(), MenuItem::sep());
-                m.insert(m.begin(), item(hp->code.empty() ? "Write a Program…" : "Edit Program…", [this, pid]() { openCode(pid); }));
+                m.insert(m.begin(), item(tr(hp->code.empty() ? "ctx.write_program" : "ctx.edit_program"), [this, pid]() { openCode(pid); }));
             }
-        if (compact) m.push_back(item("Inspector…", [this]() { drawerInspector = true; drawerParts = false; }));
+        if (compact) m.push_back(item(tr("ctx.inspector"), [this]() { drawerInspector = true; drawerParts = false; }));
         m.push_back(MenuItem::sep());
-        m.push_back(item("Delete", [this]() { deleteSelection(); }, "Del"));
+        m.push_back(item(tr("menu.edit.delete"), [this]() { deleteSelection(); }, "Del"));
     } else if (h.kind == Hit::WIRE_SEG || h.kind == Hit::WIRE_BEND || h.kind == Hit::WIRE_END) {
         int wid = h.wire;
         if (view == BB) {
             MenuItem colors;
-            colors.label = "Wire Color";
-            const std::pair<const char*, uint32_t> cs[] = {{"Blue", rgba(65, 140, 225)}, {"Red", rgba(220, 50, 50)}, {"Black", rgba(40, 40, 40)},
-                                                           {"Yellow", rgba(240, 200, 40)}, {"Green", rgba(40, 170, 80)}, {"Orange", rgba(245, 140, 30)},
-                                                           {"White", rgba(240, 240, 240)}, {"Grey", rgba(150, 150, 150)}, {"Purple", rgba(140, 70, 190)}};
-            for (auto& cc : cs) {
-                uint32_t col = cc.second;
-                colors.children.push_back(item(cc.first, [this, col]() {
+            colors.label = tr("ctx.wire_color");
+            const char* names[] = {"color.blue", "color.red", "color.black", "color.yellow", "color.green",
+                                   "color.orange", "color.white", "color.grey", "color.purple"};
+            const uint32_t cv[] = {rgba(65, 140, 225), rgba(220, 50, 50), rgba(40, 40, 40), rgba(240, 200, 40), rgba(40, 170, 80),
+                                   rgba(245, 140, 30), rgba(240, 240, 240), rgba(150, 150, 150), rgba(140, 70, 190)};
+            for (int ci = 0; ci < 9; ci++) {
+                uint32_t col = cv[ci];
+                colors.children.push_back(item(tr(names[ci]), [this, col]() {
                     checkpoint();
                     for (int id : selWires) if (Wire* w = doc.wire(id)) w->color = col;
                     changed();
@@ -589,29 +591,29 @@ std::vector<MenuItem> App::contextMenu(const Hit& h) {
             m.push_back(colors);
         }
         if (view == PCB) {
-            m.push_back(item("Move to Other Layer", [this]() {
+            m.push_back(item(tr("ctx.move_layer"), [this]() {
                 checkpoint();
                 for (int id : selWires) if (Wire* w = doc.wire(id)) w->layer = 1 - w->layer;
                 changed();
             }));
         }
-        m.push_back(item("Tidy Wire", [this]() { tidyCommand(); }));
-        m.push_back(item("Straighten (remove bends)", [this, wid]() {
+        m.push_back(item(tr("ctx.tidy_wire"), [this]() { tidyCommand(); }));
+        m.push_back(item(tr("insp.btn.straighten"), [this, wid]() {
             checkpoint();
             if (Wire* w = doc.wire(wid)) { w->pts = {w->pts.front(), w->pts.back()}; w->tidy = false; }
             changed();
         }));
         m.push_back(MenuItem::sep());
-        m.push_back(item("Delete Wire", [this]() { deleteSelection(); }, "Del"));
+        m.push_back(item(tr("insp.btn.delete_wire"), [this]() { deleteSelection(); }, "Del"));
     } else if (h.kind == Hit::NOTE) {
-        m.push_back(item("Delete Note", [this]() { deleteSelection(); }, "Del"));
+        m.push_back(item(tr("insp.btn.delete_note"), [this]() { deleteSelection(); }, "Del"));
     } else {
-        m.push_back(item("Paste", [this]() { paste(); }, "Ctrl+V"));
-        m.push_back(item("Add Note", [this]() { addNote(); }));
-        m.push_back(item("Select All", [this]() { selectAll(); }, "Ctrl+A"));
-        m.push_back(item("Fit in Window", [this]() { fitView(view, rCanvas); }, "0"));
-        m.push_back(item("Tidy All Wires", [this]() { selWires.clear(); tidyCommand(); }));
-        if (view == PCB) m.push_back(item("Autoroute", [this]() { runAutoroute(); }));
+        m.push_back(item(tr("menu.edit.paste"), [this]() { paste(); }, "Ctrl+V"));
+        m.push_back(item(tr("menu.edit.add_note"), [this]() { addNote(); }));
+        m.push_back(item(tr("menu.edit.select_all"), [this]() { selectAll(); }, "Ctrl+A"));
+        m.push_back(item(tr("menu.view.fit"), [this]() { fitView(view, rCanvas); }, "0"));
+        m.push_back(item(tr("ctx.tidy_all"), [this]() { selWires.clear(); tidyCommand(); }));
+        if (view == PCB) m.push_back(item(tr("tb.autoroute"), [this]() { runAutoroute(); }));
     }
     return m;
 }
@@ -1021,11 +1023,7 @@ void App::drawCanvas(int v, const Camera& c, Rect vp, bool exporting) {
                 std::string tip = p->label + " · " + p->def->pins[(size_t)hover.pin].name;
                 if (simOn) {
                     int net = conn.netOf(p->id, hover.pin);
-                    if (net >= 0 && net < (int)sim.netVoltage.size()) {
-                        char b[48];
-                        snprintf(b, sizeof b, "  %.2f V", sim.netVoltage[(size_t)net]);
-                        tip += b;
-                    }
+                    if (net >= 0 && net < (int)sim.netVoltage.size()) tip += "  " + num(sim.netVoltage[(size_t)net], 2) + " V";
                 }
                 float px = 13 * s;
                 float tw = g.textWidth(tip, px) + 16 * s;

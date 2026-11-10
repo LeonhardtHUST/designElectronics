@@ -3,12 +3,15 @@
 #include "packages.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <mutex>
+
+#include "i18n.h"
 
 // ---------------------------------------------------------------------------
 // Value helpers
@@ -1477,6 +1480,72 @@ std::map<std::string, PartDef> g_custom;
 using namespace plib;
 
 uint32_t ledDisplayColor(const std::string& name) { return ledColorOf(name); }
+
+// ---------------------------------------------------------------------------
+// Display helpers (see partlib.h: definitions stay in English on purpose)
+// ---------------------------------------------------------------------------
+
+static std::string lookupOr(const std::string& key, const std::string& fallback) {
+    return i18n::exists(key.c_str()) ? tr(key) : fallback;
+}
+
+std::string partTitle(const PartDef& d) { return lookupOr("part." + d.type + ".title", d.title); }
+
+std::string partDesc(const PartDef& d) { return lookupOr("part." + d.type + ".desc", d.description); }
+
+std::string partCategory(const PartDef& d) { return lookupOr("cat." + slugify(d.category), d.category); }
+
+std::string entryTitle(const LibEntry& e) {
+    std::string k = "entry." + slugify(e.title);
+    if (i18n::exists(k.c_str())) return tr(k);
+    // Catalog entries read "<part number> <description>" and share the generator's
+    // description, so a translated type name is reused with the entry's own number
+    // ("4013 Dual D Flip-Flop" + "MC1013B 双 D 触发器" -> "4013 双 D 触发器").
+    // Only swap when both leading words really are part numbers, otherwise a
+    // brand-first entry ("Raspberry Pi 4 Model B") would lose a word.
+    std::string tk = "part." + e.type + ".title";
+    if (!i18n::exists(tk.c_str())) return e.title;
+    const std::string& full = tr(tk);
+    auto numbered = [](const std::string& s, size_t n) {
+        for (size_t i = 0; i < n; i++) if (std::isdigit((unsigned char)s[i])) return true;
+        return false;
+    };
+    size_t a = e.title.find(' '), b = full.find(' ');
+    if (a != std::string::npos && b != std::string::npos && numbered(e.title, a) && numbered(full, b))
+        return e.title.substr(0, a) + full.substr(b);
+    return full;
+}
+
+std::string propLabel(const PropDef& pd) { return lookupOr("prop." + pd.key, pd.label); }
+
+std::string optionLabel(const PropDef& pd, const std::string& value) {
+    std::string specific = "propval." + pd.key + "." + value;
+    if (i18n::exists(specific.c_str())) return tr(specific);
+    return lookupOr("propval." + value, value);
+}
+
+std::string propValueLabel(const PartDef& d, const std::string& key, const std::string& value) {
+    for (auto& pd : d.propDefs)
+        if (pd.key == key) return optionLabel(pd, value);
+    return lookupOr("propval." + value, value);  // the option is not in this definition's list
+}
+
+void collectPartI18nKeys(std::map<std::string, std::string>& out) {
+    for (auto& e : partLibrary()) {
+        out["entry." + slugify(e.title)] = e.title;
+        if (!e.category.empty()) out["cat." + slugify(e.category)] = e.category;
+        PartDefPtr d = getPartDef(e.type, e.props);
+        if (!d) continue;
+        if (!d->title.empty()) out["part." + d->type + ".title"] = d->title;
+        if (!d->description.empty()) out["part." + d->type + ".desc"] = d->description;
+        if (!d->category.empty()) out["cat." + slugify(d->category)] = d->category;
+        for (auto& pd : d->propDefs) {
+            if (!pd.label.empty()) out["prop." + pd.key] = pd.label;
+            for (auto& o : pd.options) out["propval." + o] = o;
+        }
+    }
+    for (auto& c : partCategories()) out["cat." + slugify(c)] = c;
+}
 
 // ---------------------------------------------------------------------------
 // Public API

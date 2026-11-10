@@ -11,6 +11,11 @@
 #include <cstring>
 #include <set>
 
+#include <string>
+#include <vector>
+
+#include "i18n.h"
+
 namespace ard {
 namespace {
 
@@ -270,8 +275,8 @@ const std::set<std::string> kTypeWords = {"void", "bool", "boolean", "char", "by
 class Compiler {
 public:
     Compiler(const BoardInfo& b, std::vector<Ins>& code, std::vector<Ty>& types, std::vector<std::string>& strs,
-             std::vector<std::string>& warns)
-        : board_(b), code_(code), types_(types), strs_(strs), warns_(warns) {}
+             std::vector<std::string>& warns, std::vector<std::string>& notes)
+        : board_(b), code_(code), types_(types), strs_(strs), warns_(warns), notes_(notes) {}
 
     std::vector<Var> globals;
     std::vector<int> globalArrayLens;  // per global slot: array length (0 = not array)
@@ -301,6 +306,7 @@ private:
     std::vector<Ty>& types_;
     std::vector<std::string>& strs_;
     std::vector<std::string>& warns_;
+    std::vector<std::string>& notes_;
     const std::vector<Tok>* t_ = nullptr;
     size_t p_ = 0;
     std::vector<Ins>* out_ = nullptr;   // where code goes (function body or init)
@@ -332,11 +338,8 @@ private:
     // One note per library ("Wire", "WiFi", "Servo"…), not one per call.
     void warnOnce(const std::string& what, int ln) {
         if (what == "Wire" && usesOled) return;  // I²C plumbing for the emulated OLED
-        if (warned_.insert(what).second) {
-            char b[300];
-            snprintf(b, sizeof b, "%s isn't simulated: its calls are skipped here (from line %d) and work on the real board", what.c_str(), ln);
-            warns_.push_back(b);
-        }
+        if (warned_.insert(what).second)
+            notes_.push_back(trf("ard.not_simulated", {what, std::to_string(ln)}));
     }
     // Skipped library calls answer like a healthy device: begin()/init()/connect() succeed.
     static double libraryResult(const std::string& method) {
@@ -1299,6 +1302,7 @@ struct Sketch::Impl {
     std::vector<Ty> types;
     std::vector<std::string> strs;
     std::vector<std::string> warns;
+    std::vector<std::string> notes;  // skipped-library notes, shown separately from warnings
     std::vector<int> funcEntry, funcLocals;
     std::vector<std::vector<int>> funcParams;  // parameter type indexes
     int globalCount = 0;
@@ -1483,11 +1487,8 @@ struct Sketch::Impl {
         int pp = board.resolvePin ? board.resolvePin(pin) : -1;
         if (pp < 0) {
             std::string k = "pin" + std::to_string(pin);
-            if (runtimeWarned.insert(k).second) {
-                char b[160];
-                snprintf(b, sizeof b, "line %d: pin %ld isn't on this board's header (writes to it are not shown)", curLine, pin);
-                warns.push_back(b);
-            }
+            if (runtimeWarned.insert(k).second)
+                warns.push_back(trf("ard.pin_not_on_header", {std::to_string(curLine), std::to_string(pin)}));
         }
         return pp;
     }
@@ -1500,11 +1501,8 @@ struct Sketch::Impl {
         if (ps.mode != PM_OUTPUT) {
             if (board.family == "avr" && (ps.mode == PM_INPUT || ps.mode == PM_UNSET) && level < 1) {}
             else if (ps.mode == PM_UNSET || ps.mode == PM_INPUT) {
-                if (runtimeWarned.insert("nomode" + std::to_string(pin)).second) {
-                    char b[200];
-                    snprintf(b, sizeof b, "line %d: digitalWrite(%ld, …) without pinMode(%ld, OUTPUT) first", curLine, pin, pin);
-                    warns.push_back(b);
-                }
+                if (runtimeWarned.insert("nomode" + std::to_string(pin)).second)
+                    warns.push_back(trf("ard.no_pin_mode", {std::to_string(curLine), std::to_string(pin)}));
                 if (board.family == "avr") {  // real AVR: HIGH on an input turns on the pull-up (LEDs glow dimly)
                     ps.mode = level >= 1 ? PM_INPUT_PULLUP : PM_INPUT;
                     return true;
@@ -1942,18 +1940,18 @@ bool Sketch::compile(const std::string& source, const BoardInfo& board, CompileE
     m.board = board;
     m.analogBits = board.adcBits;
     std::vector<Ins> code;
-    Compiler c(board, code, m.types, m.strs, m.warns);
+    Compiler c(board, code, m.types, m.strs, m.warns, m.notes);
     Ty intTy;
     c.typeIndex(intTy);
     try {
         c.compileUnit(tokenize(kPrelude, -100000));  // prelude lines are negative: never shown
         c.compileUnit(tokenize(source, 0));
-        if (!c.funcs.count("setup") || !c.funcs["setup"].defined) throw Err{1, "the sketch needs a setup() function"};
-        if (!c.funcs.count("loop") || !c.funcs["loop"].defined) throw Err{1, "the sketch needs a loop() function"};
+        if (!c.funcs.count("setup") || !c.funcs["setup"].defined) throw Err{1, tr("ard.need_setup")};
+        if (!c.funcs.count("loop") || !c.funcs["loop"].defined) throw Err{1, tr("ard.need_loop")};
         // function table
         std::map<std::string, int> fidx;
         for (auto& kv : c.funcs) {
-            if (!kv.second.defined) throw Err{std::max(1, kv.second.firstUseLine), "'" + kv.first + "' was not declared"};
+            if (!kv.second.defined) throw Err{std::max(1, kv.second.firstUseLine), trf("ard.not_declared", {kv.first})};
             fidx[kv.first] = (int)m.funcEntry.size();
             m.funcEntry.push_back(kv.second.entry);
             m.funcLocals.push_back(kv.second.nlocals);
@@ -1994,7 +1992,7 @@ bool Sketch::compile(const std::string& source, const BoardInfo& board, CompileE
             if (ins.op == CALL && ins.d < 0) {
                 const std::string& callee = m.strs[(size_t)(-ins.d - 1)];
                 int nparams = c.funcs[callee].nparams;
-                if (ins.b != nparams) throw Err{ins.line, "'" + callee + "' takes " + std::to_string(nparams) + " argument(s), not " + std::to_string(ins.b)};
+                if (ins.b != nparams) throw Err{ins.line, trf("ard.arg_count", {callee, std::to_string(nparams), std::to_string(ins.b)})};
                 ins.a = fidx[callee];
             }
         }
@@ -2043,6 +2041,7 @@ std::string Sketch::takeSerial() { std::string s; s.swap(impl_->serialOut); retu
 void Sketch::serialInput(const std::string& text) { impl_->serialIn += text; }
 const std::map<int, PinState>& Sketch::pins() const { return impl_->pins; }
 const std::vector<std::string>& Sketch::warnings() const { return impl_->warns; }
+const std::vector<std::string>& Sketch::notes() const { return impl_->notes; }
 int Sketch::currentLine() const { return impl_->curLine; }
 const OledFrame* Sketch::oled() const { return impl_->oledUsed ? &impl_->oledShown : nullptr; }
 

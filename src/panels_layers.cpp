@@ -10,6 +10,7 @@
 #include <cctype>
 
 #include "app.h"
+#include "i18n.h"
 
 namespace {
 
@@ -18,18 +19,18 @@ std::string lower(std::string s) {
     return s;
 }
 
-const char* layerName(int l, int v) {
+std::string layerName(int l, int v) {
     switch (l) {
-        case LY_PARTS: return "Parts";
-        case LY_WIRES: return v == BB ? "Wires" : "Wires";
-        case LY_LABELS: return "Labels";
-        case LY_NOTES: return "Notes";
-        case LY_RATSNEST: return "Ratsnest";
-        case LY_BOARD: return "Board";
-        case LY_COPPER_BOTTOM: return "Bottom copper";
-        case LY_COPPER_TOP: return "Top copper";
-        case LY_PADS: return "Pads";
-        case LY_SILK: return "Silkscreen";
+        case LY_PARTS: return tr("layer.parts");
+        case LY_WIRES: return tr("layer.wires");
+        case LY_LABELS: return tr("layer.labels");
+        case LY_NOTES: return tr("layer.notes");
+        case LY_RATSNEST: return tr("layer.ratsnest");
+        case LY_BOARD: return tr("layer.board");
+        case LY_COPPER_BOTTOM: return tr("layer.copper_bottom");
+        case LY_COPPER_TOP: return tr("layer.copper_top");
+        case LY_PADS: return tr("layer.pads");
+        case LY_SILK: return tr("layer.silkscreen");
         default: return "?";
     }
 }
@@ -86,7 +87,7 @@ void App::drawLayers(Rect r) {
     float pad = 10 * s;
     float y = r.y + pad;
     if (compact) {
-        g.text({r.x + pad + 2 * s, y + 11 * s}, "Layers", 16 * s, th.text, 0);
+        g.text({r.x + pad + 2 * s, y + 11 * s}, tr("tb.layers"), 16 * s, th.text, 0);
         Rect cb(r.r() - 40 * s, y - 4 * s, 32 * s, 32 * s);
         if (ui.iconButton("closelayers", cb, "close", "")) drawerLayers = false;
     } else {
@@ -95,7 +96,7 @@ void App::drawLayers(Rect r) {
     y += 32 * s;
 
     // ---- view layers ----
-    g.text({r.x + pad, y + 8 * s}, std::string(viewName(view)) + " layers", 12 * s, th.textDim, 0);
+    g.text({r.x + pad, y + 8 * s}, trf("layers.view", {viewLabel(view)}), 12 * s, th.textDim, 0);
     y += 20 * s;
     auto ls = viewLayers(view);
     float colW = (r.w - 2 * pad) / 2;
@@ -112,7 +113,7 @@ void App::drawLayers(Rect r) {
     y += 10 * s;
 
     // ---- object list ----
-    ui.textField("layerfilter", Rect(r.x + pad, y, r.w - 2 * pad, 32 * s), layerFilter, "Filter (R1, LED, GPIO…)", true);
+    ui.textField("layerfilter", Rect(r.x + pad, y, r.w - 2 * pad, 32 * s), layerFilter, tr("layers.filter"), true);
     y += 40 * s;
     Rect list(r.x, y, r.w, r.b() - y - pad);
 
@@ -126,7 +127,7 @@ void App::drawLayers(Rect r) {
     std::string f = lower(layerFilter);
     auto matches = [&](const PartInst& p) {
         if (f.empty()) return true;
-        std::string hay = lower(p.label + " " + p.def->title + " " + p.type + " " + (p.def->valueProp.empty() ? "" : p.prop(p.def->valueProp)));
+        std::string hay = lower(p.label + " " + p.def->title + " " + partTitle(*p.def) + " " + p.type + " " + (p.def->valueProp.empty() ? "" : p.prop(p.def->valueProp)));
         for (auto& pin : p.def->pins) if (lower(pin.name).find(f) != std::string::npos) return true;
         return hay.find(f) != std::string::npos;
     };
@@ -160,7 +161,7 @@ void App::drawLayers(Rect r) {
 
     const float rowH = 40 * s;
     if (rows.empty()) {
-        ui.wrappedText(list.inset(pad), f.empty() ? "Nothing in this view yet." : "Nothing matches “" + layerFilter + "”.", th.textDim, 13 * s);
+        ui.wrappedText(list.inset(pad), f.empty() ? tr("layers.empty") : trf("layers.no_match", {layerFilter}), th.textDim, 13 * s);
         return;
     }
     float oy = ui.beginScroll("layers-list", list, (float)rows.size() * rowH);
@@ -183,12 +184,13 @@ void App::drawLayers(Rect r) {
                 else for (auto& n : doc.notes) if (n.view == view) selNotes.insert(n.id);
             }
             Rect eye(right - 26 * s, rr.center().y - 13 * s, 26 * s, 26 * s);
-            if (iconToggle(ui, "leye-" + id, eye, on ? "eye" : "eyeoff", on ? th.text : th.textDim, on ? "Hide" : "Show")) {
+            if (iconToggle(ui, "leye-" + id, eye, on ? "eye" : "eyeoff", on ? th.text : th.textDim, tr(on ? "layers.hide" : "layers.show"))) {
                 if (view == PCB && wiresGroup) layerOff[PCB][LY_COPPER_TOP] = layerOff[PCB][LY_COPPER_BOTTOM] = on;
                 else layerOff[view][layer] = on;
             }
             ui.drawIcon(wiresGroup ? "wire" : "note", Rect(x, rr.center().y - 11 * s, 22 * s, 22 * s), on ? th.textDim : withAlpha(th.textDim, 120));
-            std::string t = (wiresGroup ? (view == PCB ? "Traces (" : "Wires (") : "Notes (") + std::to_string(wiresGroup ? nWires : nNotes) + ")";
+            std::string t = trf(wiresGroup ? (view == PCB ? "layers.traces_count" : "layers.wires_count") : "layers.notes_count",
+                                {std::to_string(wiresGroup ? nWires : nNotes)});
             g.text({x + 32 * s, rr.center().y}, t, 14 * s, on ? th.text : th.textDim, 0);
             continue;
         }
@@ -211,7 +213,7 @@ void App::drawLayers(Rect r) {
         Rect eye(right - 26 * s, rr.center().y - 13 * s, 26 * s, 26 * s);
         Rect lock(right - 56 * s, rr.center().y - 13 * s, 26 * s, 26 * s);
         if (iconToggle(ui, "leye-" + rid, eye, hidden ? "eyeoff" : "eye", hidden ? th.textDim : th.text,
-                       hidden ? std::string("Show in ") + viewName(view) : std::string("Hide in ") + viewName(view)))
+                       hidden ? trf("layers.show_in", {viewLabel(view)}) : trf("layers.hide_in", {viewLabel(view)})))
             setPartHidden(p->id, view, !hidden);
         bool rowHot = ui.hovered(rr);
         std::string lockIcon = p->locked ? "lock" : rowHot ? "unlock" : "";
@@ -224,7 +226,7 @@ void App::drawLayers(Rect r) {
             if (any) {
                 bool coll = layerCollapsed.count(p->id) > 0;
                 Rect ch(x - 6 * s, rr.center().y - 10 * s, 20 * s, 20 * s);
-                if (ui.iconButton("lcol-" + rid, ch, coll ? "chevright" : "chevron", "", false, true, coll ? "Expand" : "Collapse")) {
+                if (ui.iconButton("lcol-" + rid, ch, coll ? "chevright" : "chevron", "", false, true, tr(coll ? "layers.expand" : "layers.collapse"))) {
                     if (coll) layerCollapsed.erase(p->id);
                     else layerCollapsed.insert(p->id);
                 }
@@ -246,21 +248,21 @@ void App::drawLayers(Rect r) {
             ui.tooltip(b.inset(-4 * s), tip);
             bx -= 16 * s;
         };
-        if (simOn && sim.damaged.count(p->id)) badge(th.danger, "Damaged in simulation");
+        if (simOn && sim.damaged.count(p->id)) badge(th.danger, tr("layers.damaged"));
         auto br = sim.brightness.find(p->id);
         if (simOn && br != sim.brightness.end()) {
             uint32_t lc = p->def->sim == "led" ? ledDisplayColor(p->prop("color")) : th.ok;
-            badge(withAlpha(lc, (int)(60 + 195 * std::clamp(br->second, 0.f, 1.f))), "Brightness " + std::to_string((int)std::lround(br->second * 100)) + "%");
+            badge(withAlpha(lc, (int)(60 + 195 * std::clamp(br->second, 0.f, 1.f))), trf("layers.brightness", {std::to_string((int)std::lround(br->second * 100))}));
         }
-        if (unrouted.count(p->id)) badge(rgba(235, 140, 30), std::string("Has unrouted connections in ") + viewName(view));
+        if (unrouted.count(p->id)) badge(rgba(235, 140, 30), trf("layers.unrouted", {viewLabel(view)}));
         if (p->def->sim.empty() && !p->def->isBreadboard && !p->def->isBoard && p->def->netProp.empty() && p->type != "via" && p->type != "hole" &&
             p->type.rfind("header", 0) != 0)
-            badge(th.textDim, "Not simulated (pinout only)", true);
+            badge(th.textDim, tr("layers.not_simulated"), true);
         // label + value, clipped to the space left
         float tw = bx - tx;
         std::string l1 = p->label;
-        std::string l2 = p->def->title;
-        if (!p->def->valueProp.empty() && p->def->valueProp != "pins") l2 = p->prop(p->def->valueProp) + " · " + l2;
+        std::string l2 = partTitle(*p->def);
+        if (!p->def->valueProp.empty() && p->def->valueProp != "pins") l2 = propValueLabel(*p->def, p->def->valueProp, p->prop(p->def->valueProp)) + " · " + l2;
         auto clip = [&](std::string t, float px) { return g.ellipsize(t, px, tw); };
         g.text({tx, rr.y + 13 * s}, clip(l1, 14 * s), 14 * s, hidden ? th.textDim : th.text, 0);
         g.text({tx, rr.y + 29 * s}, clip(l2, 11.5f * s), 11.5f * s, th.textDim, 0);

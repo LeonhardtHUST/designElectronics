@@ -11,6 +11,7 @@
 #include <cstring>
 
 #include "app.h"
+#include "i18n.h"
 #include "logo.h"
 
 #ifdef __EMSCRIPTEN__
@@ -134,31 +135,31 @@ void App::drawEmbedBar() {
     Rect logo(x, y, h, h);
     drawLogo(g, logo.inset(2 * s));
     if (ui.button("emb-logo", logo, "", BTN_FLAT)) SDL_OpenURL(kWebBase);
-    ui.tooltip(logo, "Made with designElectronics");
+    ui.tooltip(logo, tr("web.made_with"));
     x += h + 8 * s;
     // right side, right to left: open in editor, simulate, fit
     float rx = r.r() - 8 * s;
-    std::string openLabel = narrow ? "Open" : "Open in editor";
+    std::string openLabel = tr(narrow ? "web.open_short" : "web.open_editor");
     float ow = g.textWidth(openLabel, 13.5f * s) + 24 * s;
     rx -= ow;
     if (ui.button("emb-open", Rect(rx, y, ow, h), openLabel, BTN_NORMAL)) SDL_OpenURL(editorUrl.empty() ? kWebBase : editorUrl.c_str());
-    ui.tooltip(Rect(rx, y, ow, h), "Open this design in the full editor");
+    ui.tooltip(Rect(rx, y, ow, h), tr("web.open_tip"));
     rx -= 6 * s;
-    float sw = narrow ? h : g.textWidth("Simulate", 13.5f * s) + 30 * s;
+    float sw = narrow ? h : g.textWidth(tr("tb.simulate"), 13.5f * s) + 30 * s;
     rx -= sw;
     Rect simR(rx, y, sw, h);
     if (ui.button("emb-sim", simR, "", simOn ? BTN_PRIMARY : BTN_NORMAL)) toggleSim();
     uint32_t simCol = simOn ? rgba(255, 255, 255) : th.text;
     if (narrow) ui.drawIcon(simOn ? "stop" : "play", simR.inset(7 * s), simCol);
-    else g.text(simR.center(), simOn ? "Stop" : "Simulate", 13.5f * s, simCol, 1);
-    ui.tooltip(simR, simOn ? "Stop the simulation" : "Run the simulation");
+    else g.text(simR.center(), tr(simOn ? "tb.stop" : "tb.simulate"), 13.5f * s, simCol, 1);
+    ui.tooltip(simR, tr(simOn ? "code.tip.stop" : "tip.simulate"));
     rx -= 6 * s + h;
-    if (ui.iconButton("emb-fit", Rect(rx, y, h, h), "fit", "", false, true, "Fit in window")) fitView(view, rCanvas);
+    if (ui.iconButton("emb-fit", Rect(rx, y, h, h), "fit", "", false, true, tr("tip.fit"))) fitView(view, rCanvas);
     rx -= 10 * s;
     // view tabs: shrink (and drop the title) until they fit
-    const char* full[] = {"Breadboard", "Schematic", "PCB"};
-    const char* mid[] = {"Bread", "Schem", "PCB"};
-    const char* tiny[] = {"BB", "SCH", "PCB"};
+    const char* full[] = {"view.breadboard", "view.schematic", "view.pcb"};
+    const char* mid[] = {"tab.bread", "tab.schem", "view.pcb"};
+    const char* tiny[] = {"tab.bb", "tab.sch", "view.pcb"};
     float avail = rx - x;
     float tabW = 96 * s;
     const char** labels = full;
@@ -176,7 +177,7 @@ void App::drawEmbedBar() {
     g.fillRoundRect(seg, 8 * s, th.border);
     for (int v = 0; v < 3; v++) {
         Rect b(tx + (float)v * tabW + 2 * s, y + 2 * s, tabW - 4 * s, h - 4 * s);
-        if (ui.button(std::string("emb-v") + std::to_string(v), b, labels[v], BTN_TAB, view == v)) setView(v);
+        if (ui.button(std::string("emb-v") + std::to_string(v), b, tr(labels[v]), BTN_TAB, view == v)) setView(v);
     }
 }
 
@@ -203,7 +204,7 @@ void App::openEmbedSheet() {
     static bool embedSim = false;
     static std::string embedW = "800", embedH = "500";
     embedView = view;
-    ui.openSheet("embed", "Embed in a website", 640, 560, [this](Rect body) {
+    ui.openSheet("embed", tr("web.embed_title"), 640, 560, [this](Rect body) {
         float s = ui.s;
         auto& th = ui.th;
         float y = body.y;
@@ -216,27 +217,24 @@ void App::openEmbedSheet() {
                            "\" style=\"border:1px solid #ddd;border-radius:8px\" loading=\"lazy\" allowfullscreen "
                            "title=\"" + doc.title + " — designElectronics\"></iframe>";
 
-        float h = ui.wrappedText(Rect(body.x, y, body.w, 0),
-                                 "Paste this into any blog or web page (WordPress, Ghost, Notion, Medium-style editors with HTML embeds…). "
-                                 "Readers can switch views, pan, zoom and run the simulation. The whole design is packed into the link — nothing is uploaded.",
-                                 th.textDim, 13.5f * s);
+        float h = ui.wrappedText(Rect(body.x, y, body.w, 0), tr("web.embed_body"), th.textDim, 13.5f * s);
         y += h + 12 * s;
         // options
-        g.text({body.x, y + 15 * s}, "Start in", 13 * s, th.textDim, 0);
-        const char* names[] = {"Breadboard", "Schematic", "PCB"};
+        g.text({body.x, y + 15 * s}, tr("web.start_in"), 13 * s, th.textDim, 0);
+        const char* names[] = {"view.breadboard", "view.schematic", "view.pcb"};
         float bx = body.x + 70 * s;
         for (int v = 0; v < 3; v++) {
-            float bw = g.textWidth(names[v], 13 * s) + 24 * s;
-            if (ui.button(std::string("emb-sv") + std::to_string(v), Rect(bx, y, bw, 30 * s), names[v], BTN_CHIP, embedView == v)) embedView = v;
+            float bw = g.textWidth(tr(names[v]), 13 * s) + 24 * s;
+            if (ui.button(std::string("emb-sv") + std::to_string(v), Rect(bx, y, bw, 30 * s), tr(names[v]), BTN_CHIP, embedView == v)) embedView = v;
             bx += bw + 6 * s;
         }
-        ui.checkbox("emb-sim-start", Rect(bx + 10 * s, y, body.r() - bx - 10 * s, 30 * s), "Simulating", embedSim);
+        ui.checkbox("emb-sim-start", Rect(bx + 10 * s, y, body.r() - bx - 10 * s, 30 * s), tr("web.simulating"), embedSim);
         y += 42 * s;
-        g.text({body.x, y + 15 * s}, "Size", 13 * s, th.textDim, 0);
+        g.text({body.x, y + 15 * s}, tr("web.size"), 13 * s, th.textDim, 0);
         ui.textField("emb-w", Rect(body.x + 70 * s, y, 80 * s, 30 * s), embedW, "800", true);
         g.text({body.x + 158 * s, y + 15 * s}, "×", 14 * s, th.textDim, 0);
         ui.textField("emb-h", Rect(body.x + 176 * s, y, 80 * s, 30 * s), embedH, "500", true);
-        g.text({body.x + 266 * s, y + 15 * s}, "pixels", 13 * s, th.textDim, 0);
+        g.text({body.x + 266 * s, y + 15 * s}, tr("web.pixels"), 13 * s, th.textDim, 0);
         y += 44 * s;
         // the code
         Rect box(body.x, y, body.w, std::max(80 * s, body.b() - y - 110 * s));
@@ -246,10 +244,7 @@ void App::openEmbedSheet() {
         ui.wrappedText(Rect(box.x + 10 * s, box.y + 10 * s + oy, box.w - 20 * s, 0), shown, rgba(220, 230, 255), 12 * s);
         ui.endScroll();
         y = box.b() + 8 * s;
-        char info[160];
-        snprintf(info, sizeof info, "Link size: %.1f KB. Very large designs can use a hosted file instead: …/embed/#src=https://…/design.dez",
-                 (double)embedUrl.size() / 1024.0);
-        g.text({body.x, y + 8 * s}, info, 12 * s, embedUrl.size() > 60000 ? th.danger : th.textDim, 0);
+        g.text({body.x, y + 8 * s}, trf("web.link_size", {num((double)embedUrl.size() / 1024.0, 1)}), 12 * s, embedUrl.size() > 60000 ? th.danger : th.textDim, 0);
         // actions
         float by = body.b() - 38 * s;
         float x = body.r();
@@ -259,14 +254,14 @@ void App::openEmbedSheet() {
             if (ui.button(id, Rect(x, by, w, 38 * s), label, primary ? BTN_PRIMARY : BTN_NORMAL)) fn();
             x -= 8 * s;
         };
-        btn("emb-copy", "Copy embed code", true, [this, code]() {
+        btn("emb-copy", tr("web.copy_embed"), true, [this, code]() {
             SDL_SetClipboardText(code.c_str());
-            ui.toast("Embed code copied — paste it into your page's HTML.");
+            ui.toast(tr("toast.embed_copied"));
         });
-        btn("emb-preview", "Preview", false, [embedUrl]() { SDL_OpenURL(embedUrl.c_str()); });
-        btn("emb-link", "Copy editor link", false, [this, editorLink]() {
+        btn("emb-preview", tr("web.preview"), false, [embedUrl]() { SDL_OpenURL(embedUrl.c_str()); });
+        btn("emb-link", tr("web.copy_editor_link"), false, [this, editorLink]() {
             SDL_SetClipboardText(editorLink.c_str());
-            ui.toast("Link copied: opens this design in the web editor.");
+            ui.toast(tr("toast.link_copied"));
         });
     });
 }

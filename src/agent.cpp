@@ -18,6 +18,7 @@
 #include <thread>
 
 #include "app.h"
+#include "i18n.h"
 #include "mcp.h"
 #include "net.h"
 
@@ -51,22 +52,22 @@ std::string describeTool(std::string name, const Json& in) {
     const std::string pre = "mcp__designElectronics__";
     if (name.rfind(pre, 0) == 0) name = name.substr(pre.size());
     auto S = [&](const char* k) { return in[k].isString() ? in[k].str() : in[k].isNull() ? std::string() : in[k].dump(-1); };
-    if (name == "add_part") return "Adding " + S("type");
-    if (name == "connect") return "Wiring " + S("from_part") + "." + S("from_pin") + " → " + S("to_part") + "." + S("to_pin");
-    if (name == "place_on_breadboard") return "Plugging " + S("part") + " into " + S("hole");
-    if (name == "set_part_properties") return in["properties"].has("code") ? "Writing " + S("part") + "'s program" : "Updating " + S("part");
-    if (name == "simulate") return "Running the simulation";
-    if (name == "get_design") return "Looking at the design";
-    if (name == "list_parts") return "Searching parts" + (S("query").empty() ? "" : " for “" + S("query") + "”");
-    if (name == "get_part_info") return "Reading " + S("type") + " pinout";
-    if (name == "autoroute") return "Routing the PCB";
-    if (name == "run_drc") return "Checking design rules";
-    if (name == "move_part") return "Moving " + S("part");
-    if (name == "remove_part") return "Removing " + S("part");
-    if (name == "load_example") return "Loading an example";
-    if (name == "new_design") return "Starting a new design";
-    if (name == "export") return "Exporting " + S("format");
-    if (name == "save_design") return "Saving";
+    if (name == "add_part") return trf("agent.adding", {S("type")});
+    if (name == "connect") return trf("agent.wiring", {S("from_part"), S("from_pin"), S("to_part"), S("to_pin")});
+    if (name == "place_on_breadboard") return trf("agent.plugging", {S("part"), S("hole")});
+    if (name == "set_part_properties") return in["properties"].has("code") ? trf("agent.writing_program", {S("part")}) : trf("agent.updating", {S("part")});
+    if (name == "simulate") return tr("agent.running_simulation");
+    if (name == "get_design") return tr("agent.looking_at_design");
+    if (name == "list_parts") return S("query").empty() ? tr("agent.searching_parts") : trf("agent.searching_parts_for", {S("query")});
+    if (name == "get_part_info") return trf("agent.reading_pinout", {S("type")});
+    if (name == "autoroute") return tr("agent.routing");
+    if (name == "run_drc") return tr("agent.checking_rules");
+    if (name == "move_part") return trf("agent.moving", {S("part")});
+    if (name == "remove_part") return trf("agent.removing", {S("part")});
+    if (name == "load_example") return tr("agent.loading_example");
+    if (name == "new_design") return tr("agent.new_design");
+    if (name == "export") return trf("agent.exporting", {S("format")});
+    if (name == "save_design") return tr("agent.saving");
     return name;
 }
 
@@ -202,7 +203,7 @@ void App::ensureAgentBridge() {
     st.token = tok;
     int port = 0;
     st.listener = net::listenLocal(port);
-    if (st.listener == net::kInvalid) { st.add(ChatMsg::R_ERROR, "Couldn't open the local connection for the AI agent."); return; }
+    if (st.listener == net::kInvalid) { st.add(ChatMsg::R_ERROR, tr("agent.no_listener")); return; }
     st.port = port;
     auto stp = agent;
     App* app = this;
@@ -261,7 +262,7 @@ void App::startAgent(const std::string& prompt) {
         std::lock_guard<std::mutex> lk(st.m);
         if (st.paths.count(kind)) exe = st.paths[kind];
     }
-    if (kind != "custom" && exe.empty()) { st.add(ChatMsg::R_ERROR, "That AI tool isn't installed (see the setup notes above)."); return; }
+    if (kind != "custom" && exe.empty()) { st.add(ChatMsg::R_ERROR, tr("agent.not_installed")); return; }
     st.add(ChatMsg::R_USER, prompt);
     // working folder + MCP config pointing back at this app
     std::string dir = prefDirAgent();
@@ -304,7 +305,7 @@ void App::startAgent(const std::string& prompt) {
             while ((p = a.find("{prompt}")) != std::string::npos) a.replace(p, 8, prompt);
             while ((p = a.find("{mcp_config}")) != std::string::npos) a.replace(p, 12, cfg);
         }
-        if (args.empty()) { st.add(ChatMsg::R_ERROR, "Enter a command, e.g. mytool --mcp-config {mcp_config} -p {prompt}"); return; }
+        if (args.empty()) { st.add(ChatMsg::R_ERROR, tr("agent.need_command")); return; }
     }
     // environment: the login shell's PATH so node-based CLIs find node
     SDL_Environment* env = SDL_CreateEnvironment(true);
@@ -369,11 +370,9 @@ void App::startAgent(const std::string& prompt) {
                         }
                 } else if (type == "result") {
                     gotResult = true;
-                    char b[160];
                     double secs = (double)(SDL_GetTicks() - started) / 1000.0;
-                    snprintf(b, sizeof b, "Done in %.0f s", secs);
-                    if (j["is_error"].boolean()) stp->add(ChatMsg::R_ERROR, j["result"].str().empty() ? "The agent stopped with an error." : j["result"].str());
-                    stp->add(ChatMsg::R_INFO, b);
+                    if (j["is_error"].boolean()) stp->add(ChatMsg::R_ERROR, j["result"].str().empty() ? tr("agent.stopped_error") : j["result"].str());
+                    stp->add(ChatMsg::R_INFO, trf("agent.done_in", {num(secs, 0)}));
                 }
             } else if (kind == "codex") {
                 // newer CLI: {"type":"item.completed","item":{"type":"agent_message","text":…}}; older: {"msg":{"type":"agent_message","message":…}}
@@ -417,8 +416,8 @@ void App::startAgent(const std::string& prompt) {
         else if (code != 0 && !gotResult) {
             std::string e = err;
             if (e.size() > 600) e = e.substr(e.size() - 600);
-            stp->add(ChatMsg::R_ERROR, "The agent exited with code " + std::to_string(code) + (e.empty() ? "." : ":\n" + e));
-        } else if (kind != "claude" && kind != "codex") stp->add(ChatMsg::R_INFO, "Done.");
+            stp->add(ChatMsg::R_ERROR, trf("agent.exit_code", {std::to_string(code)}) + (e.empty() ? "." : ":\n" + e));
+        } else if (kind != "claude" && kind != "codex") stp->add(ChatMsg::R_INFO, tr("agent.done"));
         SDL_DestroyProcess(proc);
         std::lock_guard<std::mutex> lk(stp->m);
         stp->running = false;

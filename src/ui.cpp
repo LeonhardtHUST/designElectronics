@@ -2,6 +2,8 @@
 
 #include <cmath>
 
+#include "i18n.h"
+
 // Byte length of the UTF-8 sequence starting at i.
 static size_t cpBytes(const std::string& s, size_t i) {
     unsigned char c = (unsigned char)s[i];
@@ -394,7 +396,9 @@ bool UI::textArea(const std::string& sid, Rect r, std::string& value, const std:
     return submit;
 }
 
-bool UI::comboField(const std::string& sid, Rect r, std::string& value, const std::vector<std::string>& options, bool editable) {
+bool UI::comboField(const std::string& sid, Rect r, std::string& value, const std::vector<std::string>& options, bool editable,
+                    const std::function<std::string(const std::string&)>& display) {
+    auto shownAs = [&](const std::string& v) { return display ? display(v) : v; };
     float bw = options.empty() ? 0 : 30 * s;
     bool changed = false;
     if (editable) {
@@ -405,7 +409,7 @@ bool UI::comboField(const std::string& sid, Rect r, std::string& value, const st
                 std::vector<MenuItem> items;
                 for (auto& o : options) {
                     MenuItem m;
-                    m.label = o;
+                    m.label = shownAs(o);
                     m.checked = o == value;
                     std::string* target = &pendingCombo_;
                     std::string opt = o;
@@ -422,7 +426,7 @@ bool UI::comboField(const std::string& sid, Rect r, std::string& value, const st
             std::vector<MenuItem> items;
             for (auto& o : options) {
                 MenuItem m;
-                m.label = o;
+                m.label = shownAs(o);
                 m.checked = o == value;
                 std::string opt = o;
                 size_t hid = hashId(sid);
@@ -431,7 +435,7 @@ bool UI::comboField(const std::string& sid, Rect r, std::string& value, const st
             }
             openMenu(r, items);
         }
-        g->text({r.x + 10 * s, r.center().y}, value, 14 * s, th.text, 0);
+        g->text({r.x + 10 * s, r.center().y}, shownAs(value), 14 * s, th.text, 0);
         drawIcon("chevron", Rect(r.r() - 22 * s, r.center().y - 7 * s, 14 * s, 14 * s), th.textDim);
     }
     if (pendingComboId_ == hashId(sid)) {
@@ -513,7 +517,7 @@ Rect UI::menuRect(Rect anchor, const std::vector<MenuItem>& items, bool above, b
 }
 
 void UI::dialog(const std::string& title, const std::vector<std::string>& lines, std::vector<DialogButton> buttons) {
-    if (buttons.empty()) buttons.push_back({"OK", nullptr, true});
+    if (buttons.empty()) buttons.push_back({tr("ui.ok"), nullptr, true});
     dialogs_.push_back({title, lines, std::move(buttons)});
     menus_.clear();
     clearFocus();
@@ -652,7 +656,7 @@ void UI::drawSheet() {
     bool closeNow = false;
     if (!blocking()) {
         Rect cb(r.r() - pad - 30 * s, r.y + pad - 4 * s, 30 * s, 30 * s);
-        if (iconButton("sheet-close-" + sh.id, cb, "close", "", false, true, "Close")) closeNow = true;
+        if (iconButton("sheet-close-" + sh.id, cb, "close", "", false, true, tr("ui.close"))) closeNow = true;
         if (in->key(SDLK_ESCAPE) && !editingText()) closeNow = true;
     }
     Rect body(r.x + pad, r.y + pad + 36 * s, r.w - 2 * pad, r.h - 2 * pad - 36 * s);

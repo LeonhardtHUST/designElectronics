@@ -7,21 +7,22 @@
 #include <cmath>
 
 #include "app.h"
+#include "i18n.h"
 #include "logo.h"
 #include "video.h"
 
 namespace {
 
 struct Preset {
-    const char* name;
+    const char* nameKey;  // translation key: the label follows the interface language
     const char* hint;
     int w, h;
 };
 const Preset kPresets[] = {
-    {"Reels / Shorts", "9:16 · 1080×1920", 1080, 1920},
-    {"Instagram post", "4:5 · 1080×1350", 1080, 1350},
-    {"Square", "1:1 · 1080×1080", 1080, 1080},
-    {"YouTube", "16:9 · 1920×1080", 1920, 1080},
+    {"video.preset.reels", "9:16 · 1080×1920", 1080, 1920},
+    {"video.preset.instagram", "4:5 · 1080×1350", 1080, 1350},
+    {"video.preset.square", "1:1 · 1080×1080", 1080, 1080},
+    {"video.preset.youtube", "16:9 · 1920×1080", 1920, 1080},
 };
 
 }  // namespace
@@ -42,29 +43,27 @@ App::~App() = default;  // here, where VideoJob is complete
 
 void App::openVideoSheet() {
     videoTitle = doc.title;
-    ui.openSheet("video", "Export video or GIF", 680, 620, [this](Rect body) {
+    ui.openSheet("video", tr("video.title"), 680, 620, [this](Rect body) {
         float s = ui.s;
         auto& th = ui.th;
         float y = body.y;
         if (videoJob) {  // exporting: progress
             float pct = videoJob->frames ? (float)videoJob->frame / (float)videoJob->frames : 0;
-            g.text({body.x, y + 14 * s}, "Recording " + std::string(videoJob->gif ? "GIF" : "MP4") + "…", 16 * s, th.text, 0);
+            g.text({body.x, y + 14 * s}, trf("video.recording", {std::string(videoJob->gif ? "GIF" : "MP4")}), 16 * s, th.text, 0);
             y += 40 * s;
             Rect bar(body.x, y, body.w, 12 * s);
             g.fillRoundRect(bar, 6 * s, th.border);
             g.fillRoundRect(Rect(bar.x, bar.y, std::max(12 * s, bar.w * pct), bar.h), 6 * s, th.accent);
             y += 26 * s;
-            char b[96];
-            snprintf(b, sizeof b, "Frame %d of %d", videoJob->frame, videoJob->frames);
-            g.text({body.x, y + 8 * s}, b, 13 * s, th.textDim, 0);
-            if (ui.button("vid-cancel", Rect(body.r() - 110 * s, body.b() - 38 * s, 110 * s, 38 * s), "Cancel")) videoJob->cancel = true;
+            g.text({body.x, y + 8 * s}, trf("video.frame", {std::to_string(videoJob->frame), std::to_string(videoJob->frames)}), 13 * s, th.textDim, 0);
+            if (ui.button("vid-cancel", Rect(body.r() - 110 * s, body.b() - 38 * s, 110 * s, 38 * s), tr("dlg.cancel"))) videoJob->cancel = true;
             return;
         }
         auto heading = [&](const std::string& t) {
             g.text({body.x, y + 8 * s}, t, 12.5f * s, th.textDim, 0);
             y += 22 * s;
         };
-        heading("FORMAT");
+        heading(tr("video.format"));
         float x = body.x;
         for (int i = 0; i < 4; i++) {
             const Preset& p = kPresets[i];
@@ -77,28 +76,28 @@ void App::openVideoSheet() {
             float gh = 24 * s, gw = gh * (float)p.w / (float)p.h;
             if (gw > 36 * s) { gw = 36 * s; gh = gw * (float)p.h / (float)p.w; }
             g.strokeRect(Rect(r.x + 10 * s, r.center().y - gh / 2, gw, gh), 1.5f * s, sel ? th.accent : th.textDim);
-            std::string nm = p.name;
+            std::string nm = tr(p.nameKey);
             nm = g.ellipsize(nm, 12.5f * s, r.w - 60 * s);
             g.text({r.x + 54 * s, r.y + 20 * s}, nm, 12.5f * s, th.text, 0);
             g.text({r.x + 54 * s, r.y + 39 * s}, p.hint, 11 * s, th.textDim, 0);
             x += w + 8 * s;
         }
         y += 70 * s;
-        heading("FILE");
-        if (ui.button("vid-mp4", Rect(body.x, y, 120 * s, 32 * s), "MP4 video", BTN_CHIP, !videoGif)) videoGif = false;
-        if (ui.button("vid-gif", Rect(body.x + 128 * s, y, 120 * s, 32 * s), "Animated GIF", BTN_CHIP, videoGif)) videoGif = true;
-        g.text({body.x + 262 * s, y + 16 * s}, videoGif ? "half size, 15 fps — for chats, READMEs and blogs" : "30 fps H.264 — upload anywhere", 12 * s, th.textDim, 0);
+        heading(tr("video.file"));
+        if (ui.button("vid-mp4", Rect(body.x, y, 120 * s, 32 * s), tr("video.mp4"), BTN_CHIP, !videoGif)) videoGif = false;
+        if (ui.button("vid-gif", Rect(body.x + 128 * s, y, 120 * s, 32 * s), tr("video.gif"), BTN_CHIP, videoGif)) videoGif = true;
+        g.text({body.x + 262 * s, y + 16 * s}, tr(videoGif ? "video.hint.gif" : "video.hint.mp4"), 12 * s, th.textDim, 0);
         y += 44 * s;
-        heading("SHOW");
-        const char* views[] = {"Breadboard", "Schematic", "PCB", "Tour of all three"};
+        heading(tr("video.show"));
+        const char* views[] = {"view.breadboard", "view.schematic", "view.pcb", "video.view.tour"};
         x = body.x;
         for (int i = 0; i < 4; i++) {
-            float w = g.textWidth(views[i], 13 * s) + 26 * s;
-            if (ui.button("vid-v" + std::to_string(i), Rect(x, y, w, 32 * s), views[i], BTN_CHIP, videoView == i)) videoView = i;
+            float w = g.textWidth(tr(views[i]), 13 * s) + 26 * s;
+            if (ui.button("vid-v" + std::to_string(i), Rect(x, y, w, 32 * s), tr(views[i]), BTN_CHIP, videoView == i)) videoView = i;
             x += w + 6 * s;
         }
         y += 44 * s;
-        heading("LENGTH");
+        heading(tr("video.length"));
         const int secs[] = {5, 10, 15, 30};
         x = body.x;
         for (int i = 0; i < 4; i++) {
@@ -106,17 +105,17 @@ void App::openVideoSheet() {
             if (ui.button("vid-d" + std::to_string(i), Rect(x, y, 64 * s, 32 * s), l, BTN_CHIP, videoSeconds == secs[i])) videoSeconds = secs[i];
             x += 70 * s;
         }
-        ui.checkbox("vid-sim", Rect(x + 16 * s, y, 220 * s, 32 * s), "Run the simulation", videoSimulate);
+        ui.checkbox("vid-sim", Rect(x + 16 * s, y, 220 * s, 32 * s), tr("video.run_sim"), videoSimulate);
         y += 44 * s;
-        heading("NAME");
-        ui.textField("vid-title", Rect(body.x, y, body.w, 34 * s), videoTitle, "Used for the file name", true);
+        heading(tr("video.name"));
+        ui.textField("vid-title", Rect(body.x, y, body.w, 34 * s), videoTitle, tr("video.filename_placeholder"), true);
         y += 44 * s;
-        ui.checkbox("vid-wm", Rect(body.x, y, body.w, 30 * s), "Add a small designElectronics logo and link in the corner", videoWatermark);
-        if (ui.button("vid-go", Rect(body.r() - 160 * s, body.b() - 38 * s, 160 * s, 38 * s), "Export…", BTN_PRIMARY)) {
+        ui.checkbox("vid-wm", Rect(body.x, y, body.w, 30 * s), tr("video.watermark"), videoWatermark);
+        if (ui.button("vid-go", Rect(body.r() - 160 * s, body.b() - 38 * s, 160 * s, 38 * s), tr("video.export"), BTN_PRIMARY)) {
             std::string base;
             for (char c : (videoTitle.empty() ? doc.title : videoTitle)) base += std::isalnum((unsigned char)c) ? c : '_';
-            static const SDL_DialogFileFilter mp4f[] = {{"MP4 video", "mp4"}};
-            static const SDL_DialogFileFilter giff[] = {{"GIF animation", "gif"}};
+            const SDL_DialogFileFilter mp4f[] = {{tr("filter.mp4").c_str(), "mp4"}};
+            const SDL_DialogFileFilter giff[] = {{tr("filter.gif").c_str(), "gif"}};
             bool gif = videoGif;
 #ifdef __EMSCRIPTEN__
             (void)mp4f; (void)giff;
@@ -148,9 +147,9 @@ void App::startVideo(const std::string& path) {
     job->path = path;
     std::string err;
     job->writer = videoGif ? openGif(path, job->w, job->h, job->fps, &err) : openMp4(path, job->w, job->h, job->fps, &err);
-    if (!job->writer) { ui.dialog("Couldn't start the export", {err}, {}); return; }
+    if (!job->writer) { ui.dialog(tr("dlg.video_failed"), {err}, {}); return; }
     job->target = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_TARGET, job->w, job->h);
-    if (!job->target) { ui.dialog("Couldn't start the export", {SDL_GetError()}, {}); return; }
+    if (!job->target) { ui.dialog(tr("dlg.video_failed"), {SDL_GetError()}, {}); return; }
     ensureConn();
     videoJob = std::move(job);
     if (!ui.sheetOpen("video")) openVideoSheet();

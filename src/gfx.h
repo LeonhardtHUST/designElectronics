@@ -45,6 +45,9 @@ public:
     // Shortens s to fit maxW and appends "…". Cuts on UTF-8 boundaries, so CJK text
     // never ends in half a character.
     std::string ellipsize(const std::string& s, float px, float maxW, FontFace face = FONT_UI);
+    // Drops every cached text texture. Called when the interface language changes:
+    // the old language's labels would otherwise sit in the cache until LRU evicts them.
+    void clearTextCache();
     bool hasFonts() const { return !fontData_[0].empty(); }
 
 private:

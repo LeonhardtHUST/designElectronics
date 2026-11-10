@@ -7,6 +7,7 @@
 #include <cmath>
 
 #include "app.h"
+#include "i18n.h"
 
 namespace {
 
@@ -65,7 +66,7 @@ std::string App::defaultSketch(const PartInst& p) {
 
 void App::openCode(int partId) {
     PartInst* p = doc.part(partId);
-    if (!p || (p->def->sim != "board" && p->def->sim != "mcu")) { ui.toast("Select a microcontroller board to program it."); return; }
+    if (!p || (p->def->sim != "board" && p->def->sim != "mcu")) { ui.toast(tr("toast.select_board")); return; }
     if (p->code.empty()) {
         checkpoint();
         p->code = defaultSketch(*p);
@@ -88,7 +89,7 @@ void App::drawCodePanel(Rect r) {
     float pad = 8 * s;
     // ---- header ----
     Rect hdr(r.x + pad, r.y + 6 * s, r.w - 2 * pad, 32 * s);
-    std::string title = "Program · " + p->label + " (" + p->def->title + ")";
+    std::string title = trf("code.title", {p->label, partTitle(*p->def)});
     float rx = hdr.r();
     auto hbtn = [&](const std::string& id, const std::string& label, ButtonStyle st, const std::string& tip, bool enabled = true) {
         float w = g.textWidth(label, 13.5f * s) + 26 * s;
@@ -98,16 +99,16 @@ void App::drawCodePanel(Rect r) {
         rx -= 6 * s;
         return c;
     };
-    if (ui.iconButton("code-close", Rect(rx - hdr.h, hdr.y, hdr.h, hdr.h), "close", "", false, true, "Close the program panel")) {
+    if (ui.iconButton("code-close", Rect(rx - hdr.h, hdr.y, hdr.h, hdr.h), "close", "", false, true, tr("code.tip.close"))) {
         codeOpen = false;
         return;
     }
     rx -= hdr.h + 8 * s;
     bool narrow = r.w / s < 700;
-    if (hbtn("code-export", narrow ? ".ino" : "Export .ino", BTN_NORMAL, "Save the sketch as an Arduino .ino file")) exportSketch(codePart);
-    if (hbtn("code-upload", narrow ? "Upload" : "Upload to board…", BTN_NORMAL, "Compile and upload to a real board over USB (needs arduino-cli)"))
+    if (hbtn("code-export", narrow ? tr("code.btn.export_short") : tr("code.btn.export"), BTN_NORMAL, tr("code.tip.export"))) exportSketch(codePart);
+    if (hbtn("code-upload", narrow ? tr("code.btn.upload_short") : tr("code.btn.upload"), BTN_NORMAL, tr("code.tip.upload")))
         openUploadSheet(codePart);
-    if (hbtn("code-run", simOn ? "■ Stop" : "▶ Run", simOn ? BTN_NORMAL : BTN_PRIMARY, simOn ? "Stop the simulation" : "Run the program in the simulator"))
+    if (hbtn("code-run", tr(simOn ? "code.btn.stop" : "code.btn.run"), simOn ? BTN_NORMAL : BTN_PRIMARY, tr(simOn ? "code.tip.stop" : "code.tip.run")))
         toggleSim();
     float titleMax = rx - hdr.x - 8 * s;
     title = g.ellipsize(title, 15 * s, titleMax);
@@ -157,12 +158,12 @@ void App::drawCodePanel(Rect r) {
     // serial monitor
     g.fillRoundRect(serR, 6 * s, rgba(22, 27, 34));
     Rect sh(serR.x + 10 * s, serR.y + 6 * s, serR.w - 20 * s, 24 * s);
-    g.text({sh.x, sh.center().y}, "Serial Monitor", 13 * s, rgba(200, 210, 225), 0);
+    g.text({sh.x, sh.center().y}, tr("code.serial_monitor"), 13 * s, rgba(200, 210, 225), 0);
     Rect clr(sh.r() - 56 * s, sh.y, 56 * s, sh.h);
     bool clrHot = ui.hovered(clr);
     if (ui.button("ser-clear", clr, "", BTN_FLAT)) serialLog[codePart].clear();
     g.fillRoundRect(clr, 5 * s, clrHot ? rgba(60, 70, 85) : rgba(40, 48, 60));
-    g.text(clr.center(), "Clear", 12.5f * s, rgba(210, 220, 235), 1);
+    g.text(clr.center(), tr("code.clear"), 12.5f * s, rgba(210, 220, 235), 1);
     Rect logR(serR.x + 10 * s, sh.b() + 4 * s, serR.w - 20 * s, serR.h - (sh.b() - serR.y) - 52 * s);
     const std::string& log = serialLog[codePart];
     std::vector<std::string> lines;
@@ -184,12 +185,12 @@ void App::drawCodePanel(Rect r) {
         g.text({logR.x, logR.y + (float)(i - firstLine) * lh + lh / 2}, lines[i], 12.5f * s, rgba(170, 240, 190), 0, FONT_MONO);
     g.setClip(nullptr);
     if (log.empty())
-        ui.wrappedText(logR, simOn ? "Waiting for Serial output…" : "Serial.print() output appears here when the program runs.", rgba(120, 135, 155), 12.5f * s);
+        ui.wrappedText(logR, tr(simOn ? "code.serial_waiting" : "code.serial_hint"), rgba(120, 135, 155), 12.5f * s);
     Rect inR(serR.x + 10 * s, serR.b() - 40 * s, serR.w - 90 * s, 30 * s);
-    bool send = ui.textField("ser-in", inR, serialSend, "Send to the board…", true);
+    bool send = ui.textField("ser-in", inR, serialSend, tr("code.send_placeholder"), true);
     (void)send;
     bool enter = in.key(SDLK_RETURN) || in.key(SDLK_KP_ENTER);
-    if ((ui.button("ser-send", Rect(inR.r() + 6 * s, inR.y, 64 * s, inR.h), "Send", BTN_NORMAL, false, !serialSend.empty()) || (enter && !serialSend.empty())) && simOn) {
+    if ((ui.button("ser-send", Rect(inR.r() + 6 * s, inR.y, 64 * s, inR.h), tr("code.send"), BTN_NORMAL, false, !serialSend.empty()) || (enter && !serialSend.empty())) && simOn) {
         simulator.serialInput(codePart, serialSend + "\n");
         serialSend.clear();
     }
@@ -201,11 +202,11 @@ void App::exportSketch(int partId) {
     std::string name;
     for (char c : doc.title + "_" + p->label) name += std::isalnum((unsigned char)c) ? c : '_';
     std::string code = p->code;
-    static const SDL_DialogFileFilter f[] = {{"Arduino sketch", "ino"}};
+    const SDL_DialogFileFilter f[] = {{tr("filter.ino").c_str(), "ino"}};
     showSaveDialog(name + ".ino", f, 1, [this, code](const std::string& path0) {
         std::string path = path0;
         if (path.rfind("content://", 0) != 0 && (path.size() < 4 || path.substr(path.size() - 4) != ".ino")) path += ".ino";
-        if (writeTextFile(path, code)) ui.toast("Exported " + path);
-        else ui.dialog("Export failed", {path}, {});
+        if (writeTextFile(path, code)) ui.toast(trf("toast.exported", {path}));
+        else ui.dialog(tr("dlg.export_failed"), {path}, {});
     });
 }

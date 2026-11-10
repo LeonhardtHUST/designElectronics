@@ -130,7 +130,11 @@ public:
     // Multi-line, word-wrapping box that edits `value` live. Returns true when Enter is pressed (Shift+Enter = new line).
     // `padRight` keeps text clear of buttons drawn inside the box.
     bool textArea(const std::string& id, Rect r, std::string& value, const std::string& placeholder = "", float padRight = 0);
-    bool comboField(const std::string& id, Rect r, std::string& value, const std::vector<std::string>& options, bool editable);
+    // `display` maps an option value to the text shown to the user. Values are data
+    // (they are saved in .dez and matched by the simulator), so they are never
+    // translated in place — only what is drawn.
+    bool comboField(const std::string& id, Rect r, std::string& value, const std::vector<std::string>& options, bool editable,
+                    const std::function<std::string(const std::string&)>& display = {});
     bool checkbox(const std::string& id, Rect r, const std::string& label, bool& v);
     // Multi-line code editor (code_editor.cpp). Returns true when `text` changed.
     bool codeEditor(const std::string& id, Rect r, std::string& text, CodeEditorState& st, int execLine = 0, int errorLine = 0,

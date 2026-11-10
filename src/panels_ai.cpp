@@ -5,15 +5,18 @@
 #include <cstdio>
 
 #include "app.h"
+#include "i18n.h"
 
 void App::drawRightTabs(Rect r, float y) {
     float s = ui.s, pad = 10 * s;
-    const char* names[] = {"Parts", "Layers", "AI"};
+    // Ids are positional: the labels change with the interface language.
+    static const char* keys[] = {"tb.parts", "tb.layers", "tb.ai"};
     int n = agentsSupported() ? 3 : 2;
     float x = r.x + pad - 6 * s;
     for (int i = 0; i < n; i++) {
-        float w = g.textWidth(names[i], 15 * s) + 24 * s;
-        if (ui.button(std::string("rtab-") + names[i], Rect(x, y - 6 * s, w, 30 * s), names[i], BTN_TAB, rightTab == i)) rightTab = i;
+        const std::string& label = tr(keys[i]);
+        float w = g.textWidth(label, 15 * s) + 24 * s;
+        if (ui.button("rtab-" + std::to_string(i), Rect(x, y - 6 * s, w, 30 * s), label, BTN_TAB, rightTab == i)) rightTab = i;
         x += w;
     }
 }
@@ -61,7 +64,7 @@ std::string plainMarkdown(const std::string& md) {
 }
 
 const char* agentName(const std::string& k) {
-    return k == "claude" ? "Claude Code" : k == "codex" ? "Codex" : k == "gemini" ? "Gemini" : "Custom";
+    return k == "claude" ? "Claude Code" : k == "codex" ? "Codex" : k == "gemini" ? "Gemini" : tr("ai.agent.custom").c_str();
 }
 }  // namespace
 
@@ -73,17 +76,14 @@ void App::drawAIPanel(Rect r) {
     float pad = 10 * s;
     float y = r.y + pad;
     if (compact) {
-        g.text({r.x + pad + 2 * s, y + 11 * s}, "AI assistant", 16 * s, th.text, 0);
+        g.text({r.x + pad + 2 * s, y + 11 * s}, tr("ai.title"), 16 * s, th.text, 0);
         if (ui.iconButton("closeai", Rect(r.r() - 40 * s, y - 4 * s, 32 * s, 32 * s), "close", "")) drawerAI = false;
     } else drawRightTabs(r, y);
     y += 32 * s;
     float x = r.x + pad, w = r.w - 2 * pad;
 
     if (!agentsSupported()) {
-        ui.wrappedText(Rect(x, y, w, 0),
-                       "The AI assistant drives an AI tool installed on your computer, such as Claude Code. Use the desktop app for it, "
-                       "or connect your AI to designElectronics through MCP (see the AI section of the docs).",
-                       th.textDim, 13.5f * s);
+        ui.wrappedText(Rect(x, y, w, 0), tr("ai.unsupported"), th.textDim, 13.5f * s);
         return;
     }
     if (!agent) detectAgents();
@@ -105,7 +105,7 @@ void App::drawAIPanel(Rect r) {
         float bw = g.textWidth(label, 12.5f * s) + 18 * s;
         if (cx + bw > x + w) break;
         if (ui.button(std::string("ai-k-") + k, Rect(cx, y, bw, 26 * s), label, BTN_CHIP, agentKind == k, !running)) agentKind = k;
-        if (!found && detected) ui.tooltip(Rect(cx, y, bw, 26 * s), std::string(agentName(k)) + " isn't installed");
+        if (!found && detected) ui.tooltip(Rect(cx, y, bw, 26 * s), trf("ai.tip.not_installed", {agentName(k)}));
         cx += bw + 4 * s;
     }
     y += 34 * s;
@@ -113,22 +113,19 @@ void App::drawAIPanel(Rect r) {
 
     // ---- setup notes when the chosen agent is missing ----
     if (agentKind == "custom") {
-        g.text({x, y + 8 * s}, "Command ({prompt} and {mcp_config} are filled in)", 12 * s, th.textDim, 0);
-        ui.textField("ai-custom", Rect(x, y + 18 * s, w, 30 * s), agentCustomCommand, "mytool --mcp-config {mcp_config} -p {prompt}", true);
+        g.text({x, y + 8 * s}, tr("ai.custom_label"), 12 * s, th.textDim, 0);
+        ui.textField("ai-custom", Rect(x, y + 18 * s, w, 30 * s), agentCustomCommand, tr("ai.custom_placeholder"), true);
         y += 56 * s;
     } else if (detected && !ready) {
-        std::string how = agentKind == "claude"
-            ? "Claude Code isn't installed. In a terminal run:\n  npm install -g @anthropic-ai/claude-code\nthen run  claude  once to sign in, and press Check again."
-            : agentKind == "codex" ? "Codex CLI isn't installed. In a terminal run:\n  npm install -g @openai/codex\nthen  codex login, and press Check again."
-                                   : "Gemini CLI isn't installed. In a terminal run:\n  npm install -g @google/gemini-cli\nthen run  gemini  once to sign in, and press Check again.";
+        const std::string& how = tr(agentKind == "claude" ? "ai.missing.claude" : agentKind == "codex" ? "ai.missing.codex" : "ai.missing.gemini");
         float h = ui.wrappedText(Rect(x, y, w, 0), how, th.text, 13 * s);
         y += h + 8 * s;
-        if (ui.button("ai-check", Rect(x, y, 110 * s, 30 * s), "Check again")) { agent.reset(); detectAgents(); }
-        if (agentKind == "claude" && ui.button("ai-guide", Rect(x + 118 * s, y, 130 * s, 30 * s), "Install guide", BTN_FLAT))
+        if (ui.button("ai-check", Rect(x, y, 110 * s, 30 * s), tr("ai.check_again"))) { agent.reset(); detectAgents(); }
+        if (agentKind == "claude" && ui.button("ai-guide", Rect(x + 118 * s, y, 130 * s, 30 * s), tr("ai.install_guide"), BTN_FLAT))
             SDL_OpenURL("https://docs.claude.com/en/docs/claude-code/setup");
         y += 42 * s;
     } else if (!detected) {
-        g.text({x, y + 8 * s}, "Looking for AI tools on this computer…", 12.5f * s, th.textDim, 0);
+        g.text({x, y + 8 * s}, tr("ai.detecting"), 12.5f * s, th.textDim, 0);
         y += 24 * s;
     }
 
@@ -150,23 +147,21 @@ void App::drawAIPanel(Rect r) {
     }
     if (running) total += 26 * s;
     if (msgs.empty()) {
-        float h = ui.wrappedText(Rect(inner.x, inner.y, inner.w, 0),
-                                 std::string("Describe a circuit and ") + agentName(agentKind) +
-                                     " builds it here: it picks parts, wires them on the breadboard, writes sketches for boards and runs "
-                                     "the simulation to check its work. You can undo anything it does.",
-                                 th.textDim, 13 * s);
+        float h = ui.wrappedText(Rect(inner.x, inner.y, inner.w, 0), trf("ai.empty_intro", {agentName(agentKind)}), th.textDim, 13 * s);
         float sy = inner.y + h + 12 * s;
-        const char* ideas[] = {"Blink a red LED with an ESP32", "A 555 timer that flashes an LED twice a second",
-                               "Arduino + 74HC595 driving 8 LEDs as a running light", "Add a pushbutton that turns the LED on",
-                               "Make a 50×40 mm PCB for this and autoroute it"};
-        for (auto* idea : ideas) {
+        // Shown translated; the agent still receives the English prompt, which is
+        // what the tool descriptions and examples in the docs are written against.
+        const char* ideaKeys[] = {"ai.idea.1", "ai.idea.2", "ai.idea.3", "ai.idea.4", "ai.idea.5"};
+        const char* ideaPrompts[] = {"Blink a red LED with an ESP32", "A 555 timer that flashes an LED twice a second",
+                                     "Arduino + 74HC595 driving 8 LEDs as a running light", "Add a pushbutton that turns the LED on",
+                                     "Make a 50×40 mm PCB for this and autoroute it"};
+        for (int ii = 0; ii < 5; ii++) {
             Rect b(inner.x, sy, inner.w, 30 * s);
             if (b.b() > inner.b()) break;
             bool hot = ui.hovered(b);
-            if (ui.button(std::string("ai-idea-") + idea, b, "", BTN_FLAT, false, ready && !running)) startAgent(idea);
+            if (ui.button("ai-idea-" + std::to_string(ii), b, "", BTN_FLAT, false, ready && !running)) startAgent(ideaPrompts[ii]);
             g.fillRoundRect(b, 6 * s, hot ? withAlpha(th.accent, 30) : th.panel2);
-            std::string t = idea;
-            t = g.ellipsize(t, 12.5f * s, b.w - 20 * s);
+            std::string t = g.ellipsize(tr(ideaKeys[ii]), 12.5f * s, b.w - 20 * s);
             g.text({b.x + 10 * s, b.center().y}, t, 12.5f * s, ready ? th.text : th.textDim, 0);
             sy += 36 * s;
         }
@@ -217,7 +212,7 @@ void App::drawAIPanel(Rect r) {
         }
         if (running) {
             int dots = (int)(SDL_GetTicks() / 400) % 4;
-            g.text({inner.x + 2 * s, yy + 10 * s}, std::string(agentName(agentKind)) + " is working" + std::string((size_t)dots, '.'), 12.5f * s, th.accent, 0);
+            g.text({inner.x + 2 * s, yy + 10 * s}, trf("ai.working", {agentName(agentKind), std::string((size_t)dots, '.')}), 12.5f * s, th.accent, 0);
         }
         ui.endScroll();
     }
@@ -226,14 +221,13 @@ void App::drawAIPanel(Rect r) {
     float iy = list.b() + 8 * s;
     float bw = 64 * s, bh = 30 * s;
     Rect box(x, iy, w, inputH);
-    bool enter = ui.textArea("ai-input", box, agentInput,
-                             running ? "Working…" : "Describe a circuit or a change… (Shift+Enter for a new line)", bw + 4 * s);
+    bool enter = ui.textArea("ai-input", box, agentInput, tr(running ? "ai.placeholder.busy" : "ai.placeholder.idle"), bw + 4 * s);
     Rect btn(box.r() - bw - 8 * s, box.b() - bh - 8 * s, bw, bh);
     if (running) {
-        if (ui.button("ai-stop", btn, "Stop")) stopAgent();
+        if (ui.button("ai-stop", btn, tr("tb.stop"))) stopAgent();
     } else {
         bool can = ready && agentInput.find_first_not_of(" \t\n") != std::string::npos;
-        if ((ui.button("ai-send", btn, "Send", BTN_PRIMARY, false, can) || (enter && can))) {
+        if ((ui.button("ai-send", btn, tr("code.send"), BTN_PRIMARY, false, can) || (enter && can))) {
             std::string p = agentInput;
             agentInput.clear();
             startAgent(p);
@@ -241,9 +235,9 @@ void App::drawAIPanel(Rect r) {
     }
     // footer: new chat · use another MCP client
     float fy = iy + inputH + 4 * s;
-    if (!msgs.empty() && !running && ui.button("ai-new", Rect(x, fy, 80 * s, 20 * s), "New chat", BTN_FLAT)) newAgentChat();
-    if (ui.button("ai-mcp", Rect(x + w - 190 * s, fy, 190 * s, 20 * s), "Copy MCP config for other apps", BTN_FLAT)) {
+    if (!msgs.empty() && !running && ui.button("ai-new", Rect(x, fy, 80 * s, 20 * s), tr("ai.new_chat"), BTN_FLAT)) newAgentChat();
+    if (ui.button("ai-mcp", Rect(x + w - 190 * s, fy, 190 * s, 20 * s), tr("ai.mcp_copy"), BTN_FLAT)) {
         SDL_SetClipboardText(standaloneMcpConfig().c_str());
-        ui.toast("MCP config copied — paste it into Claude Desktop, Cursor, Conductor or any MCP client.");
+        ui.toast(tr("toast.mcp_copied"));
     }
 }

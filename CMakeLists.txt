@@ -28,6 +28,8 @@ set(DE_SOURCES
   src/ui.cpp
   src/gfx.cpp
   src/json.cpp
+  src/i18n.cpp
+  src/settings.cpp
   src/partlib.cpp
   src/catalog.cpp
   src/packages.cpp
@@ -70,6 +72,21 @@ add_custom_command(
   COMMENT "Embedding parts library"
   VERBATIM)
 list(APPEND DE_SOURCES ${DE_PART_BLOB})
+
+# Translation packs (i18n/*.json), compiled in for the same reason: the web and
+# mobile builds then carry every language without extra packaging. A copy in
+# i18n/ next to the executable can still override a pack at runtime.
+file(GLOB DE_I18N CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/i18n/*.json)
+list(SORT DE_I18N)
+set(DE_I18N_BLOB ${CMAKE_CURRENT_BINARY_DIR}/i18n_blob.c)
+add_custom_command(
+  OUTPUT ${DE_I18N_BLOB}
+  COMMAND ${CMAKE_COMMAND} "-DOUT=${DE_I18N_BLOB}" "-DIN=${DE_I18N}" "-DSYMBOL=de_i18n"
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_parts.cmake
+  DEPENDS ${DE_I18N} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_parts.cmake
+  COMMENT "Embedding translations"
+  VERBATIM)
+list(APPEND DE_SOURCES ${DE_I18N_BLOB})
 
 if(ANDROID)
   add_library(main SHARED ${DE_SOURCES})

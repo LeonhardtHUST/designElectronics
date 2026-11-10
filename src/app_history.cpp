@@ -6,6 +6,7 @@
 #include <memory>
 
 #include "app.h"
+#include "i18n.h"
 #include "history.h"
 
 namespace {
@@ -37,21 +38,22 @@ void App::recordVersion(const std::string& data, const std::string& message) {
     LocalVersion v = history::record(doc, data, message, &err);
     if (!err.empty()) SDL_Log("version history: %s", err.c_str());
     if (gh.autoPush && githubConnected() && v.n > 0) {
-        std::string msg = message.empty() ? "Version " + std::to_string(v.n) + ": " + v.summary : message;
+        std::string msg = message.empty() ? trf("gh.auto_version", {std::to_string(v.n), v.summary}) : message;
         pushToGitHub(msg);
     }
 }
 
 void App::pushToGitHub(const std::string& message) {
-    if (!githubConnected()) { ui.toast("Connect GitHub first (File ▸ GitHub Account…)"); return; }
-    if (ghBusy) { ui.toast("Still talking to GitHub…"); return; }
+    if (!githubConnected()) { ui.toast(tr("gh.connect_first")); return; }
+    if (ghBusy) { ui.toast(tr("gh.busy")); return; }
     history::ensureUid(doc);
     if (doc.git.repo.empty()) doc.git = github::defaultLink(gh, doc);
     std::string data = doc.serialize(true);
     GitLink link = doc.git;
     GitHubSettings s = gh;
     ghBusy = true;
-    ghStatus = "Pushing to " + link.repo + "…";
+    ghStatus = trf("gh.pushing", {link.repo});
+    ghStatusOk = ghStatusIsCommit = false;
     auto result = std::make_shared<std::pair<GitCommit, std::string>>();
     github::runAsync(
         [=]() {
@@ -64,13 +66,15 @@ void App::pushToGitHub(const std::string& message) {
             ghBusy = false;
             if (!result->second.empty()) {
                 ghStatus = result->second;
-                ui.dialog("Couldn't push to GitHub", {result->second}, {});
+                ghStatusOk = ghStatusIsCommit = false;
+                ui.dialog(tr("dlg.gh_push_failed"), {result->second}, {});
                 return;
             }
-            ghStatus = "Committed " + result->first.sha.substr(0, 7) + " to " + link.repo;
+            ghStatus = trf("gh.committed_status", {result->first.sha.substr(0, 7), link.repo});
+            ghStatusOk = ghStatusIsCommit = true;
             lastCommitUrl = result->first.url;
             ghCommitsLoaded = false;  // history list is stale now
-            ui.toast("Committed to GitHub: " + link.repo + "/" + link.path);
+            ui.toast(trf("toast.gh_committed", {link.repo, link.path}));
         },
         [this](std::function<void()> f) { runOnMain(std::move(f)); });
 }
@@ -78,7 +82,8 @@ void App::pushToGitHub(const std::string& message) {
 void App::refreshGitHubHistory() {
     if (!githubConnected() || doc.git.repo.empty() || ghBusy) return;
     ghBusy = true;
-    ghStatus = "Loading history from GitHub…";
+    ghStatus = tr("gh.loading_history");
+    ghStatusOk = ghStatusIsCommit = false;
     GitHubSettings s = gh;
     GitLink link = doc.git;
     auto result = std::make_shared<std::pair<std::vector<GitCommit>, std::string>>();
@@ -88,7 +93,8 @@ void App::refreshGitHubHistory() {
                          ghCommitsLoaded = true;
                          ghCommits = result->first;
                          ghCommitsErr = result->second;
-                         ghStatus = ghCommitsErr.empty() ? std::to_string(ghCommits.size()) + " versions on GitHub" : ghCommitsErr;
+                         ghStatus = ghCommitsErr.empty() ? trn("gh.versions", (long long)ghCommits.size()) : ghCommitsErr;
+                         ghStatusOk = ghCommitsErr.empty();
                      },
                      [this](std::function<void()> f) { runOnMain(std::move(f)); });
 }
@@ -97,7 +103,7 @@ void App::refreshGitHubHistory() {
 void App::restoreVersionText(const std::string& text, const std::string& label) {
     Document d;
     std::string err;
-    if (!d.deserialize(text, &err)) { ui.dialog("Couldn't restore that version", {err}, {}); return; }
+    if (!d.deserialize(text, &err)) { ui.dialog(tr("dlg.restore_failed"), {err}, {}); return; }
     checkpoint();
     std::string uid = doc.uid;
     GitLink link = doc.git;
@@ -109,14 +115,14 @@ void App::restoreVersionText(const std::string& text, const std::string& label) 
     pruneSelection();
     drcIssues.clear();
     ui.closeSheet();
-    ui.toast("Restored " + label + ". Save to keep it — or Undo to go back.");
+    ui.toast(trf("toast.restored", {label}));
 }
 
 void App::openVersionCopy(const std::string& text, const std::string& label) {
     confirmDiscard([this, text, label]() {
         Document d;
         std::string err;
-        if (!d.deserialize(text, &err)) { ui.dialog("Couldn't open that version", {err}, {}); return; }
+        if (!d.deserialize(text, &err)) { ui.dialog(tr("dlg.version_open_failed"), {err}, {}); return; }
         doc = std::move(d);
         doc.uid.clear();          // a copy is a new design with its own history
         doc.git = GitLink();
@@ -129,14 +135,15 @@ void App::openVersionCopy(const std::string& text, const std::string& label) {
         selParts.clear(); selWires.clear(); selNotes.clear();
         for (auto& c : cam) c.valid = false;
         ui.closeSheet();
-        ui.toast("Opened " + label + " as a new, unsaved design.");
+        ui.toast(trf("toast.opened_copy", {label}));
     });
 }
 
 void App::fetchGitHubVersion(const GitCommit& c, bool asCopy) {
     if (ghBusy) return;
     ghBusy = true;
-    ghStatus = "Downloading " + c.sha.substr(0, 7) + "…";
+    ghStatus = trf("gh.downloading", {c.sha.substr(0, 7)});
+    ghStatusOk = ghStatusIsCommit = false;
     GitHubSettings s = gh;
     GitLink link = doc.git;
     std::string sha = c.sha;
@@ -144,7 +151,12 @@ void App::fetchGitHubVersion(const GitCommit& c, bool asCopy) {
     github::runAsync([=]() { github::fetchFile(s, link, sha, result->first, result->second); },
                      [this, result, sha, asCopy]() {
                          ghBusy = false;
-                         if (!result->second.empty()) { ghStatus = result->second; ui.dialog("Couldn't download that version", {result->second}, {}); return; }
+                         if (!result->second.empty()) {
+                             ghStatus = result->second;
+                             ghStatusOk = ghStatusIsCommit = false;
+                             ui.dialog(tr("dlg.download_failed"), {result->second}, {});
+                             return;
+                         }
                          ghStatus.clear();
                          std::string label = "GitHub " + sha.substr(0, 7);
                          if (asCopy) openVersionCopy(result->first, label);
@@ -158,16 +170,16 @@ void App::fetchGitHubVersion(const GitCommit& c, bool asCopy) {
 // ---------------------------------------------------------------------------
 void App::openHistory() {
     if (githubConnected() && !doc.git.repo.empty()) refreshGitHubHistory();
-    ui.openSheet("history", "Version History", 680, 600, [this](Rect body) {
+    ui.openSheet("history", tr("hist.title"), 680, 600, [this](Rect body) {
         float s = ui.s;
         auto& th = ui.th;
         float y = body.y;
         // tabs
         auto local = doc.uid.empty() ? std::vector<LocalVersion>() : history::list(doc.uid);
-        std::string t0 = "On this device (" + std::to_string(local.size()) + ")";
-        float w0 = g.textWidth(t0, 14 * s) + 28 * s, w1 = g.textWidth("GitHub", 14 * s) + 28 * s;
+        std::string t0 = trf("hist.tab_local", {std::to_string(local.size())});
+        float w0 = g.textWidth(t0, 14 * s) + 28 * s, w1 = g.textWidth(tr("hist.tab_github"), 14 * s) + 28 * s;
         if (ui.button("hist-tab0", Rect(body.x, y, w0, 32 * s), t0, BTN_TAB, historyTab == 0)) historyTab = 0;
-        if (ui.button("hist-tab1", Rect(body.x + w0 + 6 * s, y, w1, 32 * s), "GitHub", BTN_TAB, historyTab == 1)) {
+        if (ui.button("hist-tab1", Rect(body.x + w0 + 6 * s, y, w1, 32 * s), tr("hist.tab_github"), BTN_TAB, historyTab == 1)) {
             historyTab = 1;
             if (!ghCommitsLoaded) refreshGitHubHistory();
         }
@@ -188,9 +200,9 @@ void App::openHistory() {
                 if (ui.button(id + bid, Rect(bx, r.center().y - 15 * s, bw, 30 * s), label, primary ? BTN_PRIMARY : BTN_NORMAL, false, !ghBusy)) fn();
                 bx -= 8 * s;
             };
-            btn("-copy", "Open copy", copy, false);
-            btn("-restore", "Restore", restore, true);
-            btn("-link", "View", link, false);
+            btn("-copy", tr("hist.btn.open_copy"), copy, false);
+            btn("-restore", tr("hist.btn.restore"), restore, true);
+            btn("-link", tr("hist.btn.view"), link, false);
             float tw = bx - r.x - 14 * s;
             auto clip = [&](std::string t, float px) { return g.ellipsize(t, px, tw); };
             g.text({r.x + 12 * s, r.y + 20 * s}, clip(l1, 14 * s), 14 * s, th.text, 0);
@@ -199,8 +211,7 @@ void App::openHistory() {
 
         if (historyTab == 0) {
             if (local.empty()) {
-                ui.wrappedText(list, "No versions yet. Every time you save this design, a version is kept here on this device — "
-                                     "you can look back at any of them and restore it.", th.textDim, 14 * s);
+                ui.wrappedText(list, tr("hist.empty"), th.textDim, 14 * s);
                 return;
             }
             float oy = ui.beginScroll("hist-local", list, (float)local.size() * rowH);
@@ -208,9 +219,9 @@ void App::openHistory() {
                 const LocalVersion& v = local[i];
                 float ry = list.y + oy + (float)i * rowH;
                 if (ry + rowH < list.y || ry > list.b()) continue;
-                std::string l1 = "Version " + std::to_string(v.n) + " · " + localTime(v.time) + (v.message.empty() ? "" : " · " + v.message);
+                std::string l1 = trf("hist.version_line", {std::to_string(v.n), localTime(v.time)}) + (v.message.empty() ? "" : " · " + v.message);
                 std::string uid = doc.uid;
-                std::string label = "version " + std::to_string(v.n);
+                std::string label = trf("hist.label_version", {std::to_string(v.n)});
                 row(ry, "lv" + std::to_string(v.n), l1, v.summary, i == 0 && !dirty(),
                     [this, uid, v, label]() { restoreVersionText(history::read(uid, v), label); },
                     [this, uid, v, label]() { openVersionCopy(history::read(uid, v), label); }, nullptr);
@@ -221,29 +232,28 @@ void App::openHistory() {
 
         // GitHub tab
         if (!github::available()) {
-            ui.wrappedText(list, "GitHub sync isn't available in this build of the app yet. Versions on this device still work.", th.textDim, 14 * s);
+            ui.wrappedText(list, tr("hist.no_github"), th.textDim, 14 * s);
             return;
         }
         if (!githubConnected()) {
-            float h = ui.wrappedText(list, "Connect your GitHub account to keep every committed version of your designs online, "
-                                           "in a private repository you own — and open them from any device.", th.textDim, 14 * s);
-            if (ui.button("hist-connect", Rect(list.x, list.y + h + 14 * s, 180 * s, 36 * s), "Connect GitHub…", BTN_PRIMARY)) openGitHubAccount();
+            float h = ui.wrappedText(list, tr("hist.connect_body"), th.textDim, 14 * s);
+            if (ui.button("hist-connect", Rect(list.x, list.y + h + 14 * s, 180 * s, 36 * s), tr("menu.file.github_connect"), BTN_PRIMARY)) openGitHubAccount();
             return;
         }
         if (doc.git.repo.empty()) {
-            float h = ui.wrappedText(list, "This design isn't on GitHub yet. Commit it to start its online history.", th.textDim, 14 * s);
-            if (ui.button("hist-commit", Rect(list.x, list.y + h + 14 * s, 190 * s, 36 * s), "Commit to GitHub…", BTN_PRIMARY)) openCommitSheet();
+            float h = ui.wrappedText(list, tr("hist.not_on_github"), th.textDim, 14 * s);
+            if (ui.button("hist-commit", Rect(list.x, list.y + h + 14 * s, 190 * s, 36 * s), tr("menu.file.commit"), BTN_PRIMARY)) openCommitSheet();
             return;
         }
         // header: where it lives + refresh
         std::string where = doc.git.repo + " / " + doc.git.path;
         g.text({list.x, list.y + 10 * s}, where, 13 * s, th.textDim, 0);
-        if (ui.button("hist-refresh", Rect(list.r() - 90 * s, list.y - 6 * s, 90 * s, 30 * s), ghBusy ? "Loading…" : "Refresh", BTN_NORMAL, false, !ghBusy))
+        if (ui.button("hist-refresh", Rect(list.r() - 90 * s, list.y - 6 * s, 90 * s, 30 * s), tr(ghBusy ? "hist.loading" : "hist.refresh"), BTN_NORMAL, false, !ghBusy))
             refreshGitHubHistory();
         Rect l2(list.x, list.y + 32 * s, list.w, list.h - 32 * s);
         if (!ghStatus.empty() && (ghBusy || !ghCommitsErr.empty())) g.text({l2.x, l2.b() + 2 * s}, ghStatus, 12 * s, ghCommitsErr.empty() ? th.textDim : th.danger, 0);
         if (ghCommitsLoaded && ghCommits.empty() && ghCommitsErr.empty()) {
-            ui.wrappedText(l2, "No commits of this design yet. Use File ▸ Commit to GitHub….", th.textDim, 14 * s);
+            ui.wrappedText(l2, tr("hist.no_commits"), th.textDim, 14 * s);
             return;
         }
         float oy = ui.beginScroll("hist-gh", l2, (float)ghCommits.size() * rowH);
@@ -263,14 +273,14 @@ void App::openHistory() {
 // Commit to GitHub sheet
 // ---------------------------------------------------------------------------
 void App::openCommitSheet() {
-    if (!github::available()) { ui.dialog("GitHub sync unavailable", {"This build of the app can't reach GitHub yet. Versions on this device still work (File ▸ Version History)."}, {}); return; }
+    if (!github::available()) { ui.dialog(tr("dlg.gh_unavailable_title"), {tr("dlg.gh_unavailable_body")}, {}); return; }
     if (!githubConnected()) { openGitHubAccount(); return; }
     history::ensureUid(doc);
     GitLink link = doc.git.repo.empty() ? github::defaultLink(gh, doc) : doc.git;
     commitRepo = link.repo;
     commitPath = link.path;
     commitMsg.clear();
-    ui.openSheet("commit", "Commit to GitHub", 600, 470, [this](Rect body) {
+    ui.openSheet("commit", tr("commit.title"), 600, 470, [this](Rect body) {
         float s = ui.s;
         auto& th = ui.th;
         float y = body.y;
@@ -279,24 +289,22 @@ void App::openCommitSheet() {
             ui.textField(id, Rect(body.x, y + 20 * s, body.w, 34 * s), v, ph, true);
             y += 66 * s;
         };
-        field("commit-msg", "What changed?", commitMsg, "e.g. Added a status LED on GPIO2");
-        field("commit-repo", "Repository (owner/name)", commitRepo, gh.login + "/" + gh.defaultRepo);
-        field("commit-path", "File in the repository", commitPath, "my-design/my-design.dez");
+        field("commit-msg", tr("commit.what_changed"), commitMsg, tr("commit.what_changed_ph"));
+        field("commit-repo", tr("commit.repo"), commitRepo, gh.login + "/" + gh.defaultRepo);
+        field("commit-path", tr("commit.file"), commitPath, tr("commit.file_ph"));
         float h = ui.wrappedText(Rect(body.x, y, body.w, 0),
-                                 "Each design is kept in its own folder. To keep this design completely separate, give it its own repository — "
-                                 "it's created as a private repository if it doesn't exist." +
-                                     std::string(dirty() && !filePath.empty() ? " Unsaved changes are saved first." : ""),
+                                 tr("commit.note") + (dirty() && !filePath.empty() ? tr("commit.note_unsaved") : std::string()),
                                  th.textDim, 13 * s);
         y += h + 10 * s;
         if (!ghStatus.empty()) {
-            g.text({body.x, y + 8 * s}, ghStatus, 13 * s, ghBusy ? th.textDim : (ghStatus.rfind("Committed", 0) == 0 ? th.ok : th.danger), 0);
-            if (!lastCommitUrl.empty() && !ghBusy && ghStatus.rfind("Committed", 0) == 0 &&
-                ui.button("commit-view", Rect(body.r() - 140 * s, y - 6 * s, 140 * s, 28 * s), "View on GitHub", BTN_FLAT))
+            g.text({body.x, y + 8 * s}, ghStatus, 13 * s, ghBusy ? th.textDim : (ghStatusOk ? th.ok : th.danger), 0);
+            if (!lastCommitUrl.empty() && !ghBusy && ghStatusIsCommit &&
+                ui.button("commit-view", Rect(body.r() - 140 * s, y - 6 * s, 140 * s, 28 * s), tr("commit.view"), BTN_FLAT))
                 SDL_OpenURL(lastCommitUrl.c_str());
         }
         float by = body.b() - 38 * s;
         bool ok = !ghBusy && commitRepo.find('/') != std::string::npos && !commitPath.empty();
-        if (ui.button("commit-go", Rect(body.r() - 170 * s, by, 170 * s, 38 * s), ghBusy ? "Pushing…" : "Commit & Push", BTN_PRIMARY, false, ok)) {
+        if (ui.button("commit-go", Rect(body.r() - 170 * s, by, 170 * s, 38 * s), tr(ghBusy ? "commit.pushing" : "commit.go"), BTN_PRIMARY, false, ok)) {
             doc.git.repo = commitRepo;
             doc.git.path = commitPath;
             bool keep = gh.autoPush;
@@ -306,7 +314,7 @@ void App::openCommitSheet() {
             gh.autoPush = keep;
             pushToGitHub(commitMsg);
         }
-        if (ui.button("commit-cancel", Rect(body.r() - 270 * s, by, 90 * s, 38 * s), "Close")) ui.closeSheet();
+        if (ui.button("commit-cancel", Rect(body.r() - 270 * s, by, 90 * s, 38 * s), tr("dlg.close"))) ui.closeSheet();
     });
 }
 
@@ -316,35 +324,31 @@ void App::openCommitSheet() {
 void App::openGitHubAccount() {
     tokenInput.clear();
     repoInput = gh.defaultRepo;
-    ui.openSheet("account", "GitHub Account", 600, 520, [this](Rect body) {
+    ui.openSheet("account", tr("acct.title"), 600, 520, [this](Rect body) {
         float s = ui.s;
         auto& th = ui.th;
         float y = body.y;
         if (!github::available()) {
-            ui.wrappedText(body, "This build of the app can't reach GitHub yet (it was built without HTTPS support). "
-                                 "Versions on this device still work: File ▸ Version History.", th.textDim, 14 * s);
+            ui.wrappedText(body, tr("acct.no_https"), th.textDim, 14 * s);
             return;
         }
         if (githubConnected()) {
-            g.text({body.x, y + 10 * s}, "Connected as @" + gh.login, 16 * s, th.ok, 0);
-            if (ui.button("acct-disconnect", Rect(body.r() - 120 * s, y - 4 * s, 120 * s, 32 * s), "Disconnect")) {
+            g.text({body.x, y + 10 * s}, trf("acct.connected", {gh.login}), 16 * s, th.ok, 0);
+            if (ui.button("acct-disconnect", Rect(body.r() - 120 * s, y - 4 * s, 120 * s, 32 * s), tr("acct.disconnect"))) {
                 gh.token.clear();
                 gh.login.clear();
                 github::saveSettings(gh);
-                ui.toast("Disconnected from GitHub. The token was removed from this device.");
+                ui.toast(tr("toast.disconnected"));
             }
             y += 46 * s;
-            g.text({body.x, y + 8 * s}, "Repository for designs (created private if missing)", 13 * s, th.textDim, 0);
-            if (ui.textField("acct-repo", Rect(body.x, y + 20 * s, body.w, 34 * s), repoInput, "electronics-designs", true)) {}
+            g.text({body.x, y + 8 * s}, tr("acct.repo_label"), 13 * s, th.textDim, 0);
+            if (ui.textField("acct-repo", Rect(body.x, y + 20 * s, body.w, 34 * s), repoInput, tr("acct.repo_ph"), true)) {}
             y += 66 * s;
             bool ap = gh.autoPush;
-            if (ui.checkbox("acct-autopush", Rect(body.x, y, body.w, 30 * s), "Commit to GitHub automatically every time I save", ap)) gh.autoPush = ap;
+            if (ui.checkbox("acct-autopush", Rect(body.x, y, body.w, 30 * s), tr("acct.autopush"), ap)) gh.autoPush = ap;
             y += 40 * s;
-            ui.wrappedText(Rect(body.x, y, body.w, 0),
-                           "Designs go into this repository, each in its own folder. A design can also be given its own repository "
-                           "when you commit it. Versions on this device are kept either way.",
-                           th.textDim, 13 * s);
-            if (ui.button("acct-save", Rect(body.r() - 120 * s, body.b() - 38 * s, 120 * s, 38 * s), "Done", BTN_PRIMARY)) {
+            ui.wrappedText(Rect(body.x, y, body.w, 0), tr("acct.body"), th.textDim, 13 * s);
+            if (ui.button("acct-save", Rect(body.r() - 120 * s, body.b() - 38 * s, 120 * s, 38 * s), tr("acct.done"), BTN_PRIMARY)) {
                 std::string r;
                 for (char c : repoInput) if (std::isalnum((unsigned char)c) || c == '-' || c == '_' || c == '.') r += c;
                 if (!r.empty()) gh.defaultRepo = r;
@@ -355,29 +359,25 @@ void App::openGitHubAccount() {
         }
         // not connected
         Rect sign(body.x, y, body.w, 40 * s);
-        ui.button("acct-oauth", sign, "Sign in with GitHub — coming soon", BTN_NORMAL, false, false);
+        ui.button("acct-oauth", sign, tr("acct.signin_soon"), BTN_NORMAL, false, false);
         y += 56 * s;
-        float h = ui.wrappedText(Rect(body.x, y, body.w, 0),
-                                 "For now, connect with a personal access token. On GitHub: Settings ▸ Developer settings ▸ Fine-grained tokens ▸ "
-                                 "Generate new token. Give it access to the repositories you'll use (or All repositories) with Contents: Read and write, "
-                                 "plus Administration: Read and write so the app can create a private repository for your designs.",
-                                 th.textDim, 13 * s);
+        float h = ui.wrappedText(Rect(body.x, y, body.w, 0), tr("acct.pat_help"), th.textDim, 13 * s);
         y += h + 8 * s;
-        if (ui.button("acct-open", Rect(body.x, y, 210 * s, 32 * s), "Open GitHub token page", BTN_FLAT))
+        if (ui.button("acct-open", Rect(body.x, y, 210 * s, 32 * s), tr("acct.open_token"), BTN_FLAT))
             SDL_OpenURL("https://github.com/settings/personal-access-tokens/new");
         y += 44 * s;
-        g.text({body.x, y + 8 * s}, "Token", 13 * s, th.textDim, 0);
-        ui.textField("acct-token", Rect(body.x, y + 20 * s, body.w, 34 * s), tokenInput, "github_pat_…", true);
+        g.text({body.x, y + 8 * s}, tr("acct.token_label"), 13 * s, th.textDim, 0);
+        ui.textField("acct-token", Rect(body.x, y + 20 * s, body.w, 34 * s), tokenInput, tr("acct.token_ph"), true);
         y += 66 * s;
         if (!ghStatus.empty() && !githubConnected()) ui.wrappedText(Rect(body.x, y, body.w, 0), ghStatus, ghBusy ? th.textDim : th.danger, 13 * s);
-        ui.wrappedText(Rect(body.x, body.b() - 80 * s, body.w - 140 * s, 0),
-                       "The token is stored only on this device, readable only by you. Disconnect removes it.", th.textDim, 12 * s);
+        ui.wrappedText(Rect(body.x, body.b() - 80 * s, body.w - 140 * s, 0), tr("acct.token_note"), th.textDim, 12 * s);
         bool can = !ghBusy && tokenInput.size() > 10;
-        if (ui.button("acct-connect", Rect(body.r() - 120 * s, body.b() - 38 * s, 120 * s, 38 * s), ghBusy ? "Checking…" : "Connect", BTN_PRIMARY, false, can)) {
+        if (ui.button("acct-connect", Rect(body.r() - 120 * s, body.b() - 38 * s, 120 * s, 38 * s), tr(ghBusy ? "acct.checking" : "acct.connect"), BTN_PRIMARY, false, can)) {
             std::string token;
             for (char c : tokenInput) if (!std::isspace((unsigned char)c)) token += c;
             ghBusy = true;
-            ghStatus = "Checking the token…";
+            ghStatus = tr("gh.checking_token");
+            ghStatusOk = ghStatusIsCommit = false;
             auto result = std::make_shared<std::pair<std::string, std::string>>();
             github::runAsync([token, result]() { github::whoAmI(token, result->first, result->second); },
                              [this, token, result]() {
@@ -389,7 +389,7 @@ void App::openGitHubAccount() {
                                  tokenInput.clear();
                                  ghStatus.clear();
                                  repoInput = gh.defaultRepo;
-                                 ui.toast("Connected to GitHub as @" + gh.login);
+                                 ui.toast(trf("toast.gh_connected", {gh.login}));
                              },
                              [this](std::function<void()> f) { runOnMain(std::move(f)); });
         }

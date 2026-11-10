@@ -142,6 +142,7 @@ public:
 
     // layout
     float userScale = 1.0f;
+    std::string startupLanguage;  // --lang: overrides the stored/system choice for this run
     bool compact = false;
     bool drawerParts = false, drawerInspector = false;
     std::string search;
@@ -209,6 +210,7 @@ public:
     void runDrc();
     void toggleSim();
     void setView(int v);
+    void setLanguage(const std::string& code);
     void handleShortcuts();
 
     // ---- panels_code.cpp: a board's program (Arduino sketch) ----
@@ -289,6 +291,8 @@ public:
     GitHubSettings gh;
     bool ghBusy = false;
     std::string ghStatus, ghCommitsErr, lastCommitUrl;
+    bool ghStatusOk = false;  // ghStatus is a success message (green), not an error
+    bool ghStatusIsCommit = false;  // …and it came from a push, so "View on GitHub" applies
     std::vector<GitCommit> ghCommits;
     bool ghCommitsLoaded = false;
     int historyTab = 0;

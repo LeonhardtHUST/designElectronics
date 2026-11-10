@@ -8,6 +8,7 @@
 #include <mutex>
 
 #include "app.h"
+#include "i18n.h"
 
 namespace {
 
@@ -197,8 +198,8 @@ void App::openUploadSheet(int partId) {
     PartInst* p = doc.part(partId);
     if (!p) return;
 #if defined(__EMSCRIPTEN__) || defined(SDL_PLATFORM_IOS) || defined(SDL_PLATFORM_ANDROID)
-    ui.dialog("Upload to a board", {"Uploading to a real board needs the desktop app (macOS, Windows or Linux) with Arduino IDE 2 or arduino-cli installed.",
-                                    "", "You can export the sketch (.ino) and open it in the Arduino IDE."}, {});
+    ui.dialog(tr("up.title"), {tr("up.mobile_body"),
+                                    "", tr("up.mobile_body2")}, {});
     return;
 #else
     uploadPart = partId;
@@ -209,28 +210,23 @@ void App::openUploadSheet(int partId) {
     uploadStatus.clear();
     if (!uploadJob) uploadJob = std::make_shared<UploadJob>();
     if (!arduinoCli.empty()) refreshPorts();
-    ui.openSheet("upload", "Upload to a board", 680, 560, [this](Rect body) {
+    ui.openSheet("upload", tr("up.title"), 680, 560, [this](Rect body) {
         float s = ui.s;
         auto& th = ui.th;
         PartInst* p = doc.part(uploadPart);
         if (!p) { ui.closeSheet(); return; }
         float y = body.y;
         if (arduinoCli.empty()) {
-            float h = ui.wrappedText(Rect(body.x, y, body.w, 0),
-                                     "To upload, designElectronics uses arduino-cli, the tool behind the Arduino IDE. Install either one:\n\n"
-                                     "• Arduino IDE 2 (it includes arduino-cli), or\n"
-                                     "• arduino-cli on its own: macOS  brew install arduino-cli · Windows  winget install ArduinoSA.CLI · Linux  see the install page\n\n"
-                                     "Then open this window again. You can also export the sketch and open it in the Arduino IDE.",
-                                     th.text, 14 * s);
+            float h = ui.wrappedText(Rect(body.x, y, body.w, 0), tr("up.install_help"), th.text, 14 * s);
             y += h + 16 * s;
-            if (ui.button("up-ide", Rect(body.x, y, 200 * s, 36 * s), "Get the Arduino IDE", BTN_PRIMARY)) SDL_OpenURL("https://www.arduino.cc/en/software");
-            if (ui.button("up-cli", Rect(body.x + 210 * s, y, 200 * s, 36 * s), "arduino-cli install page", BTN_NORMAL))
+            if (ui.button("up-ide", Rect(body.x, y, 200 * s, 36 * s), tr("up.get_ide"), BTN_PRIMARY)) SDL_OpenURL("https://www.arduino.cc/en/software");
+            if (ui.button("up-cli", Rect(body.x + 210 * s, y, 200 * s, 36 * s), tr("up.cli_page"), BTN_NORMAL))
                 SDL_OpenURL("https://arduino.github.io/arduino-cli/latest/installation/");
-            if (ui.button("up-again", Rect(body.x + 420 * s, y, 120 * s, 36 * s), "Check again", BTN_NORMAL)) {
+            if (ui.button("up-again", Rect(body.x + 420 * s, y, 120 * s, 36 * s), tr("ai.check_again"), BTN_NORMAL)) {
                 arduinoCli = findArduinoCli();
                 if (!arduinoCli.empty()) refreshPorts();
             }
-            if (ui.button("up-export", Rect(body.r() - 150 * s, body.b() - 38 * s, 150 * s, 38 * s), "Export .ino", BTN_NORMAL)) exportSketch(uploadPart);
+            if (ui.button("up-export", Rect(body.r() - 150 * s, body.b() - 38 * s, 150 * s, 38 * s), tr("code.btn.export"), BTN_NORMAL)) exportSketch(uploadPart);
             return;
         }
         bool busy;
@@ -241,18 +237,18 @@ void App::openUploadSheet(int partId) {
             log = uploadJob->log;
         }
         const float lw = 90 * s, rowH = 34 * s;
-        g.text({body.x, y + rowH / 2}, "Board", 13 * s, th.textDim, 0);
-        ui.textField("up-fqbn", Rect(body.x + lw, y, body.w - lw, rowH), uploadFqbn, "e.g. arduino:avr:uno", true);
+        g.text({body.x, y + rowH / 2}, tr("up.board"), 13 * s, th.textDim, 0);
+        ui.textField("up-fqbn", Rect(body.x + lw, y, body.w - lw, rowH), uploadFqbn, tr("up.fqbn_ph"), true);
         y += rowH + 8 * s;
-        g.text({body.x, y + rowH / 2}, "Port", 13 * s, th.textDim, 0);
+        g.text({body.x, y + rowH / 2}, tr("up.port"), 13 * s, th.textDim, 0);
         std::vector<std::string> opts = uploadPorts;
         if (opts.empty()) opts.push_back("");
         if (uploadPort.empty() && !uploadPorts.empty()) uploadPort = uploadPorts[0];
         std::string shown = uploadPort;
         if (ui.comboField("up-port", Rect(body.x + lw, y, body.w - lw - 100 * s, rowH), shown, opts, true)) uploadPort = shown;
-        if (ui.button("up-refresh", Rect(body.r() - 92 * s, y, 92 * s, rowH), "Refresh", BTN_NORMAL, false, !busy)) refreshPorts();
+        if (ui.button("up-refresh", Rect(body.r() - 92 * s, y, 92 * s, rowH), tr("hist.refresh"), BTN_NORMAL, false, !busy)) refreshPorts();
         y += rowH + 4 * s;
-        g.text({body.x + lw, y + 9 * s}, uploadPorts.empty() ? "No boards found — plug one in over USB and press Refresh." : uploadStatus, 12 * s,
+        g.text({body.x + lw, y + 9 * s}, uploadPorts.empty() ? tr("up.no_boards") : uploadStatus, 12 * s,
                uploadPorts.empty() ? th.danger : th.textDim, 0);
         y += 24 * s;
         // log
@@ -274,7 +270,7 @@ void App::openUploadSheet(int partId) {
             g.text({logR.x + 10 * s, logR.y + 6 * s + (float)(i - first) * lh + lh / 2}, l, 11.5f * s,
                    l.rfind("$ ", 0) == 0 ? rgba(130, 170, 255) : rgba(200, 210, 225), 0, FONT_MONO);
         }
-        if (lines.empty()) g.text({logR.x + 10 * s, logR.y + 18 * s}, "Output from the compiler and uploader appears here.", 12 * s, rgba(120, 135, 155), 0);
+        if (lines.empty()) g.text({logR.x + 10 * s, logR.y + 18 * s}, tr("up.log_empty"), 12 * s, rgba(120, 135, 155), 0);
         // actions
         float by = body.b() - 38 * s, x = body.r();
         auto btn = [&](const std::string& id, const std::string& label, bool primary, bool enabled, std::function<void()> fn) {
@@ -283,9 +279,9 @@ void App::openUploadSheet(int partId) {
             if (ui.button(id, Rect(x, by, w, 38 * s), label, primary ? BTN_PRIMARY : BTN_NORMAL, false, enabled)) fn();
             x -= 8 * s;
         };
-        btn("up-go", busy ? "Working…" : "Compile & Upload", true, !busy && !uploadFqbn.empty() && !uploadPort.empty(), [this]() { startUpload(); });
-        btn("up-install", "Install board support", false, !busy && !uploadFqbn.empty(), [this]() { installCore(); });
-        btn("up-verify", "Compile only", false, !busy && !uploadFqbn.empty(), [this]() { startUpload(true); });
+        btn("up-go", tr(busy ? "ai.placeholder.busy" : "up.compile_upload"), true, !busy && !uploadFqbn.empty() && !uploadPort.empty(), [this]() { startUpload(); });
+        btn("up-install", tr("up.install_core"), false, !busy && !uploadFqbn.empty(), [this]() { installCore(); });
+        btn("up-verify", tr("up.compile_only"), false, !busy && !uploadFqbn.empty(), [this]() { startUpload(true); });
         g.text({body.x, by + 19 * s}, uploadResult, 13 * s, uploadResultOk ? th.ok : th.danger, 0);
     });
 #endif
@@ -295,7 +291,7 @@ void App::refreshPorts() {
     runCli({arduinoCli, "board", "list", "--format", "json"}, "list", [this](int code, const std::string& out) {
         uploadPorts.clear();
         uploadStatus.clear();
-        if (code != 0) { uploadStatus = "Couldn't list ports (see the log)."; return; }
+        if (code != 0) { uploadStatus = tr("up.cant_list_ports"); return; }
         Json j = Json::parse(out);
         const Json& arr = j.isArray() ? j : j["detected_ports"];
         std::string detected;
@@ -312,7 +308,7 @@ void App::refreshPorts() {
                 if (uploadPort.empty()) uploadPort = addr;
             }
         }
-        uploadStatus = detected.empty() ? std::to_string(uploadPorts.size()) + " serial port(s) found" : "Detected " + detected;
+        uploadStatus = detected.empty() ? trn("up.ports_found", (long long)uploadPorts.size()) : trf("up.detected", {detected});
         if (!uploadPorts.empty() && std::find(uploadPorts.begin(), uploadPorts.end(), uploadPort) == uploadPorts.end()) uploadPort = uploadPorts[0];
     });
 }
@@ -324,13 +320,13 @@ void App::installCore() {
     std::vector<std::string> upd = {arduinoCli, "core", "update-index"};
     std::vector<std::string> inst = {arduinoCli, "core", "install", core};
     if (!url.empty()) { upd.push_back("--additional-urls"); upd.push_back(url); inst.push_back("--additional-urls"); inst.push_back(url); }
-    uploadResult = "Installing " + core + " (this can take a few minutes)…";
+    uploadResult = trf("up.installing", {core});
     uploadResultOk = true;
     runCli(upd, "install", [this, inst](int code, const std::string&) {
-        if (code != 0) { uploadResult = "Couldn't update the board index (see the log)."; uploadResultOk = false; return; }
+        if (code != 0) { uploadResult = tr("up.index_failed"); uploadResultOk = false; return; }
         runCli(inst, "install", [this](int code2, const std::string&) {
             uploadResultOk = code2 == 0;
-            uploadResult = code2 == 0 ? "Board support installed." : "Install failed (see the log).";
+            uploadResult = code2 == 0 ? tr("up.core_installed") : tr("up.install_failed");
         });
     });
 }
@@ -353,14 +349,14 @@ void App::startUpload(bool compileOnly) {
     if (!url.empty()) { args.push_back("--additional-urls"); args.push_back(url); }
     if (!compileOnly) { args.push_back("--upload"); args.push_back("-p"); args.push_back(uploadPort); }
     args.push_back(dir);
-    uploadResult = compileOnly ? "Compiling…" : "Compiling and uploading…";
+    uploadResult = tr(compileOnly ? "up.compiling" : "up.compiling_uploading");
     uploadResultOk = true;
     runCli(args, "upload", [this, compileOnly](int code, const std::string& out) {
         uploadResultOk = code == 0;
-        if (code == 0) uploadResult = compileOnly ? "Compiled successfully." : "Uploaded! The board is running your sketch.";
+        if (code == 0) uploadResult = tr(compileOnly ? "up.compiled" : "up.uploaded");
         else if (out.find("platform not installed") != std::string::npos || out.find("Platform '") != std::string::npos ||
                  (out.find("not found") != std::string::npos && out.find("Platform") != std::string::npos))
-            uploadResult = "Board support isn't installed: click Install board support, then try again.";
-        else uploadResult = compileOnly ? "Compile failed (see the log)." : "Upload failed (see the log).";
+            uploadResult = tr("up.core_missing");
+        else uploadResult = tr(compileOnly ? "up.compile_failed" : "up.upload_failed");
     });
 }

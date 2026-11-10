@@ -103,10 +103,27 @@ struct PartDef {
 
 using PartDefPtr = std::shared_ptr<const PartDef>;
 
+// Display helpers. A definition keeps the English source text because the whole
+// definition is embedded in .dez files (doc.cpp writes partDefToJson) — translating
+// it in place would save Chinese text into an English user's project. These look up
+// "part.<type>.title" (etc.) at draw time and fall back to the stored English.
+std::string partTitle(const PartDef& d);
+std::string partDesc(const PartDef& d);
+std::string partCategory(const PartDef& d);
+std::string propLabel(const PropDef& pd);
+std::string optionLabel(const PropDef& pd, const std::string& value);
+// Label for a definition's headline property value ("Yellow" -> 黄). Values that
+// are numbers or part numbers fall through unchanged.
+std::string propValueLabel(const PartDef& d, const std::string& key, const std::string& value);
+
 struct LibEntry {
     std::string type, title, category;
     Props props;  // preset properties (e.g. LED color)
 };
+
+// Library entries carry their own title ("Green LED" vs the generator's "LED"),
+// so they get their own key: entry.<slug of the English title>.
+std::string entryTitle(const LibEntry& e);
 
 const std::vector<LibEntry>& partLibrary();
 const std::vector<std::string>& partCategories();
@@ -134,6 +151,11 @@ std::vector<std::string> checkPartData();
 
 // Display colour of an LED colour name ("Red", "Blue", …).
 uint32_t ledDisplayColor(const std::string& name);
+
+// Every string the library can display, as translation key -> English text
+// (part.<type>.title, cat.<slug>, entry.<slug>, prop.<key>, propval.<value>).
+// --export-i18n uses it to write a complete en.json for translators.
+void collectPartI18nKeys(std::map<std::string, std::string>& out);
 
 // "4.7kΩ" -> 4700, "100nF" -> 1e-7, "9V" -> 9
 double parseSI(const std::string& s, double def = 0);

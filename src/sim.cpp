@@ -16,6 +16,7 @@
 
 #include "tools.h"
 #include "arduino.h"
+#include "i18n.h"
 
 namespace {
 
@@ -1138,10 +1139,10 @@ SimResult Simulator::step(const Document& doc, const Connectivity& conn, const s
     time += dt * steps;
 
     if (solveFailed) {
-        res.message = "The circuit could not be solved — check for a short circuit between power rails.";
+        res.message = tr("sim.no_solution");
         return res;
     }
-    res.message = !anySource ? "No power source: add a battery or a microcontroller board." : (finalIters >= 59 ? "Simulating (unstable — oscillating states)" : "Simulating");
+    res.message = !anySource ? tr("sim.no_power") : (finalIters >= 59 ? tr("sim.unstable") : tr("sim.simulating"));
     for (auto& kv : nodeOf) res.netVoltage[(size_t)kv.first] = x[(size_t)kv.second];
     impl_->lastNetV.clear();
     for (auto& kv : nodeOf) impl_->lastNetV[kv.first] = x[(size_t)kv.second];
@@ -1150,26 +1151,23 @@ SimResult Simulator::step(const Document& doc, const Connectivity& conn, const s
     // program status, Serial output and warnings
     for (auto& kv : programs) {
         const PartInst* p = doc.part(kv.first);
-        std::string label = p ? p->label : "board";
+        std::string label = p ? p->label : tr("common.board");
         SimResult::Code c;
         auto& prog = kv.second;
         if (!prog.ok) {
             c.errorLine = std::max(1, prog.err.line);
             c.error = prog.err.message;
-            char b[400];
-            snprintf(b, sizeof b, "%s's program, line %d: %s", label.c_str(), c.errorLine, c.error.c_str());
-            res.warnings.push_back(b);
+            res.warnings.push_back(trf("sim.program_error", {label, std::to_string(c.errorLine), c.error}));
         } else {
             c.running = prog.sketch->running();
             c.line = prog.sketch->currentLine();
             if (!prog.sketch->runtimeError().empty()) {
                 c.errorLine = std::max(1, prog.sketch->runtimeLine());
                 c.error = prog.sketch->runtimeError();
-                char b[400];
-                snprintf(b, sizeof b, "%s's program stopped at line %d: %s", label.c_str(), c.errorLine, c.error.c_str());
-                res.warnings.push_back(b);
+                res.warnings.push_back(trf("sim.program_stopped", {label, std::to_string(c.errorLine), c.error}));
             }
-            for (auto& w : prog.sketch->warnings()) res.warnings.push_back(label + ": " + w);
+            for (auto& w : prog.sketch->warnings()) res.warnings.push_back(trf("sim.sketch_warning", {label, w}));
+            for (auto& n : prog.sketch->notes()) res.notes.push_back(trf("sim.sketch_warning", {label, n}));
             std::string out = prog.sketch->takeSerial();
             if (!out.empty()) res.serial[kv.first] = out;
         }
@@ -1191,7 +1189,7 @@ SimResult Simulator::step(const Document& doc, const Connectivity& conn, const s
                 drivenOleds.insert(q.label);
                 shown = true;
             }
-            if (!shown) res.warnings.push_back(label + "'s program draws on an OLED, but no OLED's SDA/SCL is wired to it.");
+            if (!shown) res.warnings.push_back(trf("sim.oled_unwired", {label}));
         }
     }
 
@@ -1202,8 +1200,7 @@ SimResult Simulator::step(const Document& doc, const Connectivity& conn, const s
         const PartInst* p = doc.part(kv.first);
         if (p && iavg > 0.035) {
             res.damaged.insert(p->id);
-            snprintf(buf, sizeof buf, "%s: %.0f mA is too much for an LED (max ~20 mA). Add or increase a series resistor.", p->label.c_str(), iavg * 1000);
-            res.warnings.push_back(buf);
+            res.warnings.push_back(trf("sim.led_overcurrent", {p->label, num(iavg * 1000, 0)}));
         }
     }
     for (auto& kv : segAccum) {
@@ -1231,8 +1228,7 @@ SimResult Simulator::step(const Document& doc, const Connectivity& conn, const s
             double pw = v * v / r;
             if (pw > powerRating(p.prop("power")) * 1.05) {
                 res.damaged.insert(p.id);
-                snprintf(buf, sizeof buf, "%s dissipates %.2f W, more than its %s rating.", p.label.c_str(), pw, p.prop("power").c_str());
-                res.warnings.push_back(buf);
+                res.warnings.push_back(trf("sim.overpower", {p.label, num(pw, 2), p.prop("power")}));
             }
         } else if (m == "battery") {
             std::string style = p.prop("style");
@@ -1240,8 +1236,7 @@ SimResult Simulator::step(const Document& doc, const Connectivity& conn, const s
             double i = (parseSI(p.prop("voltage"), 9) - (V(Nid(p, "plus")) - V(Nid(p, "minus")))) / rint;
             if (i > 1.0 && style != "Coin cell") {
                 res.damaged.insert(p.id);
-                snprintf(buf, sizeof buf, "%s is short-circuited (%.1f A)!", p.label.c_str(), i);
-                res.warnings.push_back(buf);
+                res.warnings.push_back(trf("sim.short", {p.label, num(i, 1)}));
             }
         } else if (m == "multimeter") {
             bool cur = p.prop("mode").find("Current") != std::string::npos;
@@ -1271,8 +1266,7 @@ SimResult Simulator::step(const Document& doc, const Connectivity& conn, const s
                     double drop = v - V(node);
                     if (node != FLOAT && drop > 0.3) {
                         res.damaged.insert(p.id);
-                        snprintf(buf, sizeof buf, "%s: the %s pin is overloaded (%.1f A) — short circuit?", p.label.c_str(), pname.c_str(), drop / 0.1);
-                        res.warnings.push_back(buf);
+                        res.warnings.push_back(trf("sim.pin_overload", {p.label, pname, num(drop / 0.1, 1)}));
                     }
                 }
             }
@@ -1281,10 +1275,10 @@ SimResult Simulator::step(const Document& doc, const Connectivity& conn, const s
     unsupported.erase(std::remove_if(unsupported.begin(), unsupported.end(), [&](const std::string& l) { return drivenOleds.count(l) > 0; }),
                       unsupported.end());
     if (!unsupported.empty()) {
-        std::string s = "Not simulated (pinout only): ";
+        std::string s;
         for (size_t i = 0; i < unsupported.size() && i < 6; i++) s += (i ? ", " : "") + unsupported[i];
         if (unsupported.size() > 6) s += "…";
-        res.warnings.push_back(s);
+        res.notes.push_back(trf("sim.not_simulated_list", {s}));
     }
     return res;
 }

@@ -87,6 +87,9 @@ public:
     // Pin states keyed by part pin index.
     const std::map<int, PinState>& pins() const;
     const std::vector<std::string>& warnings() const;
+    // Informational notes (skipped library calls). Kept apart from warnings so the
+    // UI can fold them into one grey line instead of matching on their text.
+    const std::vector<std::string>& notes() const;
     int currentLine() const;                   // line being executed (for the editor)
     const OledFrame* oled() const;             // nullptr if the sketch never drew on an OLED
 

@@ -64,6 +64,13 @@ void Gfx::shutdown() {
     TTF_Quit();
 }
 
+void Gfx::clearTextCache() {
+    flush();
+    for (auto& kv : textCache_) SDL_DestroyTexture(kv.second.tex);
+    textCache_.clear();
+    lru_.clear();
+}
+
 TTF_Font* Gfx::font(FontFace face, int px) {
     if (fontData_[face].empty()) return nullptr;
     int key = face * 1000 + px;

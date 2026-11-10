@@ -5,6 +5,7 @@
 //   designElectronics [file.dez]                open a project
 //   designElectronics --selftest                run headless model/tool tests
 //   designElectronics --export-examples DIR     write the built-in examples as .dez files
+//   designElectronics --export-i18n DIR         write the built-in language packs as editable JSON
 //   designElectronics --export-logo DIR         write logo.svg and app icon PNGs
 //   designElectronics --mcp                     run as an MCP server on stdin/stdout (for AI assistants)
 //   designElectronics --screenshot OUT.png [--example N] [--view bb|sch|pcb] [--sim]
@@ -17,9 +18,12 @@
 
 #include <cstdio>
 #include <cstring>
+#include <map>
+#include <string>
 
 #include "app.h"
 #include "history.h"
+#include "i18n.h"
 #include "logo.h"
 #include "mcp.h"
 #include "partmodels.h"
@@ -801,6 +805,9 @@ int githubSelftest() {
 
 int selftest() {
     int failures = 0;
+    // The assertions below match the English source strings, so pin the language.
+    i18n::initEmbedded();
+    i18n::setLang("en");
     printf("designElectronics %s self-test\n", kAppVersion);
     printf("Part library: %zu entries\n", partLibrary().size());
     for (auto& e : partLibrary()) {
@@ -920,6 +927,34 @@ int exportExamples(const std::string& dir) {
         for (auto& c : name) if (c == ' ' || c == '+' || c == '/') c = '_';
         std::string path = dir + "/" + name + kFileExt;
         if (!writeTextFile(path, d.serialize(true))) { printf("could not write %s\n", path.c_str()); return 1; }
+        printf("wrote %s\n", path.c_str());
+    }
+    return 0;
+}
+
+// Writes the built-in language packs as editable JSON. Copy the ones you change
+// into an "i18n" folder next to the executable (or into the preferences folder)
+// to override the compiled-in text without rebuilding.
+int exportI18n(const std::string& dir) {
+    i18n::initEmbedded();
+    // The part library and the examples build their keys from data, so a static
+    // scan cannot find them: enumerate the live library instead.
+    std::map<std::string, std::string> harvested;
+    collectPartI18nKeys(harvested);
+    for (auto& e : examples()) harvested["ex." + slugify(e.title) + ".title"] = e.title;
+
+    SDL_CreateDirectory(dir.c_str());
+    for (auto& code : i18n::packCodes()) {
+        std::string text = i18n::dumpPack(code);
+        if (code == "en") {  // harvested text is English by definition
+            std::string err;
+            Json j = Json::parse(text, &err);
+            if (!j.isObject()) { printf("could not read the English pack: %s\n", err.c_str()); return 1; }
+            for (auto& kv : harvested) j.set(kv.first, Json(kv.second));
+            text = j.dump(2);
+        }
+        std::string path = dir + "/" + code + ".json";
+        if (!writeTextFile(path, text)) { printf("could not write %s\n", path.c_str()); return 1; }
         printf("wrote %s\n", path.c_str());
     }
     return 0;
@@ -1065,6 +1100,7 @@ int g_recordPreset = 0, g_recordSeconds = 3, g_recordView = -1;
 bool g_recordStarted = false;
 std::string g_editorUrl;
 int g_loadExample = -1;
+std::string g_forceLang;  // --lang: overrides the stored/system language for this run
 Screenshot g_shot;
 int g_frame = 0;
 
@@ -1098,6 +1134,7 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
         }
         if (a == "--selftest") return selftest() == 0 ? SDL_APP_SUCCESS : SDL_APP_FAILURE;
         if (a == "--export-examples") return exportExamples(next()) == 0 ? SDL_APP_SUCCESS : SDL_APP_FAILURE;
+        if (a == "--export-i18n") return exportI18n(next()) == 0 ? SDL_APP_SUCCESS : SDL_APP_FAILURE;
         if (a == "--screenshot") g_shot.out = next();
         else if (a == "--example") g_shot.example = std::atoi(next().c_str());
         else if (a == "--view") { std::string v = next(); g_shot.view = (v == "sch" || v == "schematic") ? SCH : v == "pcb" ? PCB : BB; }
@@ -1136,10 +1173,12 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
         else if (a == "--editor-url") g_editorUrl = next();
         else if (a == "--load-example") g_loadExample = std::atoi(next().c_str());
         else if (a == "--size") { std::string s = next(); sscanf(s.c_str(), "%dx%d", &g_shot.w, &g_shot.h); }
+        else if (a == "--lang") g_forceLang = next();  // interface language for this run ("en", "zh-CN", …)
         else if (a.rfind("-psn", 0) == 0) continue;  // macOS Finder launch argument
         else rest.push_back(argv[i]);
     }
     g_app = new App();
+    g_app->startupLanguage = g_forceLang;
     *appstate = g_app;
     g_app->embedMode = g_app->readOnly = g_embed;
     g_app->editorUrl = g_editorUrl;

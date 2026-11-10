@@ -1,6 +1,8 @@
 #include "app.h"
+#include "i18n.h"
 #include "logo.h"
 #include "partmodels.h"
+#include "settings.h"
 
 #include <algorithm>
 #include <cmath>
@@ -25,6 +27,9 @@ bool App::init(int argc, char** argv) {
         SDL_Log("SDL_Init failed: %s", SDL_GetError());
         return false;
     }
+    // Translations before anything draws: the stored choice wins, otherwise the OS
+    // locale picks the language. --lang overrides both for screenshots and tests.
+    i18n::init(!startupLanguage.empty() ? startupLanguage : settingsGet("language"));
     SDL_WindowFlags wflags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
 #ifdef __EMSCRIPTEN__
     wflags |= SDL_WINDOW_FILL_DOCUMENT;  // the canvas follows the page / iframe size
@@ -91,6 +96,16 @@ void App::shutdown() {
     g.shutdown();
     if (ren) SDL_DestroyRenderer(ren);
     if (win) SDL_DestroyWindow(win);
+}
+
+// Switching is instant: every label is looked up again on the next frame, so no
+// restart is needed. Cached text textures belong to the old language, drop them.
+void App::setLanguage(const std::string& code) {
+    if (!i18n::setLang(code)) return;
+    settingsSet("language", i18n::lang());
+    g.clearTextCache();
+    ui.closeMenus();
+    ui.clearFocus();  // a field may still show an old-language placeholder
 }
 
 std::string App::autosavePath() const {
@@ -212,7 +227,7 @@ static void restoreSnapshot(Document& doc, const std::string& s) {
 }
 
 void App::undo() {
-    if (undoStack.empty()) { ui.toast("Nothing to undo"); return; }
+    if (undoStack.empty()) { ui.toast(tr("toast.nothing_to_undo")); return; }
     redoStack.push_back(doc.snapshot());
     restoreSnapshot(doc, undoStack.back());
     undoStack.pop_back();
@@ -220,7 +235,7 @@ void App::undo() {
 }
 
 void App::redo() {
-    if (redoStack.empty()) { ui.toast("Nothing to redo"); return; }
+    if (redoStack.empty()) { ui.toast(tr("toast.nothing_to_redo")); return; }
     undoStack.push_back(doc.snapshot());
     restoreSnapshot(doc, redoStack.back());
     redoStack.pop_back();
@@ -239,10 +254,10 @@ void App::pruneSelection() {
 
 void App::confirmDiscard(std::function<void()> then) {
     if (!dirty()) { then(); return; }
-    ui.dialog("Save changes?", {"\"" + doc.title + "\" has unsaved changes. Do you want to save them first?"},
-              {{"Don't Save", then, false},
-               {"Cancel", nullptr, false},
-               {"Save", [this, then]() {
+    ui.dialog(tr("dlg.discard.title"), {trf("dlg.discard.body", {doc.title})},
+              {{tr("dlg.dont_save"), then, false},
+               {tr("dlg.cancel"), nullptr, false},
+               {tr("dlg.save"), [this, then]() {
                     if (filePath.empty()) { saveAs(); return; }
                     save();
                     then();
@@ -276,38 +291,38 @@ static bool endsWith(const std::string& s, const std::string& suf) {
 bool App::loadFile(const std::string& path) {
     bool ok = false;
     std::string text = readTextFile(path, &ok);
-    if (!ok) { ui.dialog("Could not open file", {path, SDL_GetError()}, {}); return false; }
+    if (!ok) { ui.dialog(tr("dlg.open_failed"), {path, SDL_GetError()}, {}); return false; }
     std::string perr;
     Json j = Json::parse(text, &perr);
-    if (!perr.empty()) { ui.dialog("Could not open file", {"The file is not valid designElectronics JSON.", perr}, {}); return false; }
+    if (!perr.empty()) { ui.dialog(tr("dlg.open_failed"), {tr("dlg.open_failed.json"), perr}, {}); return false; }
     if (j["format"].str() == "designElectronics-part" || (j.has("pins") && j.has("graphics"))) {
         PartModel m;
         std::string err;
-        if (!partModelFromJson(j, m, &err)) { ui.dialog("Could not import part", {err}, {}); return false; }
+        if (!partModelFromJson(j, m, &err)) { ui.dialog(tr("dlg.import_failed"), {err}, {}); return false; }
         if (isCustomType(m.def.type)) {
             PartModel copy = m;
-            ui.dialog("Already in the part library",
-                      {"\"" + m.meta.name + "\" (" + m.def.type + ") is already installed. Replace it with this file?"},
-                      {{"Cancel", []() {}, false},
-                       {"Replace", [this, copy]() {
+            ui.dialog(tr("dlg.installed.title"),
+                      {trf("dlg.installed.body", {m.meta.name, m.def.type})},
+                      {{tr("dlg.cancel"), []() {}, false},
+                       {tr("dlg.replace"), [this, copy]() {
                             std::string e;
-                            if (!installPartModel(copy, true, &e, nullptr)) { ui.dialog("Could not import part", {e}, {}); return; }
+                            if (!installPartModel(copy, true, &e, nullptr)) { ui.dialog(tr("dlg.import_failed"), {e}, {}); return; }
                             category = -2;
-                            ui.toast("Replaced \"" + copy.meta.name + "\" in the part library.");
+                            ui.toast(trf("toast.replaced", {copy.meta.name}));
                         }, true}});
             return true;
         }
         std::vector<std::string> warnings;
-        if (!installPartModel(m, false, &err, &warnings)) { ui.dialog("Could not import part", {err}, {}); return false; }
+        if (!installPartModel(m, false, &err, &warnings)) { ui.dialog(tr("dlg.import_failed"), {err}, {}); return false; }
         category = -2;
-        std::string msg = "Imported \"" + m.meta.name + "\" into the part library.";
+        std::string msg = trf("toast.imported", {m.meta.name});
         if (!warnings.empty()) msg += " " + warnings.front();
         ui.toast(msg, 5);
         return true;
     }
     std::string err;
     std::vector<std::string> before;
-    if (!doc.fromJson(j, &err)) { ui.dialog("Could not open file", {err}, {}); return false; }
+    if (!doc.fromJson(j, &err)) { ui.dialog(tr("dlg.open_failed"), {err}, {}); return false; }
     customEntries.clear();
     for (auto& lj : j["library"].items())
         if (isCustomType(lj["type"].str())) customEntries.push_back({lj["type"].str(), lj["title"].str(), "Custom", {}});
@@ -319,7 +334,7 @@ bool App::loadFile(const std::string& path) {
     for (auto& c : cam) c.valid = false;
     drcIssues.clear();
     simOn = false;
-    ui.toast("Opened " + doc.title);
+    ui.toast(trf("toast.opened", {doc.title}));
     return true;
 }
 
@@ -331,13 +346,13 @@ bool App::saveFile(const std::string& pathIn, const std::string& versionMessage)
     history::ensureUid(doc);
     std::string data = doc.serialize(true);
     if (!writeTextFile(path, data)) {
-        ui.dialog("Could not save", {path, SDL_GetError()}, {});
+        ui.dialog(tr("dlg.save_failed"), {path, SDL_GetError()}, {});
         return false;
     }
     filePath = path;
     savedRevision = doc.revision;
     autosave(true);
-    ui.toast("Saved " + (uri ? doc.title : path));
+    ui.toast(trf("toast.saved", {uri ? doc.title : path}));
     recordVersion(data, versionMessage);  // local version history (+ GitHub when auto-push is on)
     return true;
 }
@@ -375,7 +390,7 @@ static void SDLCALL dialogCallback(void* userdata, const char* const* filelist, 
         auto fallback = ctx->onUnsupported;
         app->runOnMain([app, err, fallback]() {
             if (fallback) fallback();
-            else app->ui.toast("File dialog unavailable: " + err);
+            else app->ui.toast(trf("toast.dialog_unavailable", {err}));
         });
     } else if (filelist[0]) {
         std::string path = filelist[0];
@@ -399,7 +414,7 @@ static void showSave(App* app, const std::string& defName, const SDL_DialogFileF
         // No native dialog (e.g. iOS): save into the app's Documents folder, which
         // is visible in the Files app and can be shared from there.
         onPath(def);
-        app->ui.toast("Saved to " + def);
+        app->ui.toast(trf("toast.saved_to", {def}));
     }};
     SDL_ShowSaveFileDialog(dialogCallback, ctx, app->win, filters, n, def.c_str());
 }
@@ -409,7 +424,8 @@ void App::showSaveDialog(const std::string& name, const SDL_DialogFileFilter* fi
 }
 
 void App::saveAs() {
-    static const SDL_DialogFileFilter f[] = {{"designElectronics project", "dez"}};
+    // Not static: the filter label has to follow the interface language.
+    const SDL_DialogFileFilter f[] = {{tr("filter.project").c_str(), "dez"}};
     std::string name = sanitize(doc.title) + kFileExt;
     showSave(this, name, f, 1, [this](const std::string& p) { saveFile(p); });
 }
@@ -420,7 +436,7 @@ void App::openDialog() {
         webPickFile(".dez,.dezpart,.json");
         return;
 #endif
-        static const SDL_DialogFileFilter f[] = {{"designElectronics files", "dez;dezpart;json"}, {"All files", "*"}};
+        const SDL_DialogFileFilter f[] = {{tr("filter.files").c_str(), "dez;dezpart;json"}, {tr("filter.all").c_str(), "*"}};
         auto* ctx = new DialogCtx{this, [this](const std::string& p) { loadFile(p); }, nullptr};
         std::string dir = documentsDir();
         SDL_ShowOpenFileDialog(dialogCallback, ctx, win, f, 2, dir.c_str(), false);
@@ -432,7 +448,7 @@ void App::importPartDialog() {
     webPickFile(".dezpart,.json");
     return;
 #endif
-    static const SDL_DialogFileFilter f[] = {{"designElectronics part", "dezpart;json"}};
+    const SDL_DialogFileFilter f[] = {{tr("filter.part").c_str(), "dezpart;json"}};
     auto* ctx = new DialogCtx{this, [this](const std::string& p) { loadFile(p); }, nullptr};
     SDL_ShowOpenFileDialog(dialogCallback, ctx, win, f, 1, documentsDir().c_str(), false);
 }
@@ -441,50 +457,50 @@ void App::exportFile(const std::string& kind) {
     ensureConn();
     std::string base = sanitize(doc.title);
     if (kind == "gerber") {
-        static const SDL_DialogFileFilter f[] = {{"Zip archive", "zip"}};
+        const SDL_DialogFileFilter f[] = {{tr("filter.zip").c_str(), "zip"}};
         showSave(this, base + "_gerber.zip", f, 1, [this](const std::string& p) {
             std::string path = p;
             if (path.rfind("content://", 0) != 0 && !endsWith(path, ".zip")) path += ".zip";
             ensureConn();
             std::string msg;
             if (exportGerberZip(doc, conn, path, &msg)) ui.toast(msg, 5);
-            else ui.dialog("Export failed", {msg}, {});
+            else ui.dialog(tr("dlg.export_failed"), {msg}, {});
         });
     } else if (kind == "svg") {
-        static const SDL_DialogFileFilter f[] = {{"SVG image", "svg"}};
+        const SDL_DialogFileFilter f[] = {{tr("filter.svg").c_str(), "svg"}};
         int v = view;
         showSave(this, base + "_" + viewKey(v) + ".svg", f, 1, [this, v](const std::string& p) {
             std::string path = p;
             if (path.rfind("content://", 0) != 0 && !endsWith(path, ".svg")) path += ".svg";
             ensureConn();
-            if (writeTextFile(path, exportSvg(doc, conn, v))) ui.toast("Exported " + path);
-            else ui.dialog("Export failed", {SDL_GetError()}, {});
+            if (writeTextFile(path, exportSvg(doc, conn, v))) ui.toast(trf("toast.exported", {path}));
+            else ui.dialog(tr("dlg.export_failed"), {SDL_GetError()}, {});
         });
     } else if (kind == "png") {
-        static const SDL_DialogFileFilter f[] = {{"PNG image", "png"}};
+        const SDL_DialogFileFilter f[] = {{tr("filter.png").c_str(), "png"}};
         int v = view;
         showSave(this, base + "_" + viewKey(v) + ".png", f, 1, [this, v](const std::string& p) {
             std::string path = p;
             if (path.rfind("content://", 0) != 0 && !endsWith(path, ".png")) path += ".png";
             std::string msg;
-            if (renderViewPng(v, path, &msg)) ui.toast("Exported " + path);
-            else ui.dialog("Export failed", {msg}, {});
+            if (renderViewPng(v, path, &msg)) ui.toast(trf("toast.exported", {path}));
+            else ui.dialog(tr("dlg.export_failed"), {msg}, {});
         });
     } else if (kind == "bom" || kind == "netlist" || kind == "spice") {
         const char* ext = kind == "bom" ? "csv" : kind == "netlist" ? "xml" : "cir";
-        static SDL_DialogFileFilter f[1];
-        f[0] = {kind == "bom" ? "CSV spreadsheet" : kind == "netlist" ? "XML netlist" : "SPICE netlist", ext};
+        SDL_DialogFileFilter f[1];
+        f[0] = {tr(kind == "bom" ? "filter.csv" : kind == "netlist" ? "filter.xml" : "filter.spice").c_str(), ext};
         std::string suffix = kind == "bom" ? "_bom.csv" : kind == "netlist" ? "_netlist.xml" : ".cir";
         showSave(this, base + suffix, f, 1, [this, kind, ext](const std::string& p) {
             std::string path = p;
             if (path.rfind("content://", 0) != 0 && !endsWith(path, std::string(".") + ext)) path += std::string(".") + ext;
             ensureConn();
             std::string data = kind == "bom" ? exportBomCsv(doc) : kind == "netlist" ? exportNetlistXml(doc, conn) : exportSpice(doc, conn);
-            if (writeTextFile(path, data)) ui.toast("Exported " + path);
-            else ui.dialog("Export failed", {SDL_GetError()}, {});
+            if (writeTextFile(path, data)) ui.toast(trf("toast.exported", {path}));
+            else ui.dialog(tr("dlg.export_failed"), {SDL_GetError()}, {});
         });
     } else if (kind == "part") {
-        if (selParts.size() != 1) { ui.toast("Select one part to export its definition."); return; }
+        if (selParts.size() != 1) { ui.toast(tr("toast.select_one_part")); return; }
         const PartInst* p = doc.part(*selParts.begin());
         if (!p) return;
         PartDef def = *p->def;
@@ -497,11 +513,11 @@ void App::exportFile(const std::string& kind) {
         m.meta.datasheet = def.datasheet;
         m.meta.source = "json";
         std::string data = partModelToJson(m).dump(1);
-        static const SDL_DialogFileFilter f[] = {{"designElectronics part", "dezpart"}};
+        const SDL_DialogFileFilter f[] = {{tr("filter.part").c_str(), "dezpart"}};
         showSave(this, sanitize(p->def->title) + ".dezpart", f, 1, [this, data](const std::string& path0) {
             std::string path = path0;
             if (path.rfind("content://", 0) != 0 && !endsWith(path, ".dezpart")) path += ".dezpart";
-            if (writeTextFile(path, data)) ui.toast("Exported part definition to " + path);
+            if (writeTextFile(path, data)) ui.toast(trf("toast.exported_part", {path}));
         });
     }
 }
@@ -523,19 +539,19 @@ void App::showPartModelInfo(const std::string& type) {
         m.meta.source = "built-in";
     }
     std::vector<std::string> lines;
-    lines.push_back("Id: " + m.def.type);
-    lines.push_back("Category: " + m.def.category);
-    lines.push_back(std::to_string(m.def.pins.size()) + " pins" +
-                    (m.def.sim.empty() ? ", no simulator model" : ", simulator model " + m.def.sim));
-    if (!m.def.silkscreen.empty()) lines.push_back("Silkscreen: " + m.def.silkscreen);
-    if (!m.meta.datasheet.empty()) lines.push_back("Datasheet: " + m.meta.datasheet);
-    if (!m.def.tags.empty()) lines.push_back("Tags: " + m.def.tags);
-    if (!m.path.empty()) lines.push_back("File: " + m.path);
+    lines.push_back(trf("dlg.model_info.id", {m.def.type}));
+    lines.push_back(trf("dlg.model_info.category", {partCategory(m.def)}));
+    lines.push_back(m.def.sim.empty() ? trf("dlg.model_info.pins_nosim", {std::to_string(m.def.pins.size())})
+                                      : trf("dlg.model_info.pins_sim", {std::to_string(m.def.pins.size()), m.def.sim}));
+    if (!m.def.silkscreen.empty()) lines.push_back(trf("dlg.model_info.silkscreen", {m.def.silkscreen}));
+    if (!m.meta.datasheet.empty()) lines.push_back(trf("dlg.model_info.datasheet", {m.meta.datasheet}));
+    if (!m.def.tags.empty()) lines.push_back(trf("dlg.model_info.tags", {m.def.tags}));
+    if (!m.path.empty()) lines.push_back(trf("dlg.model_info.file", {m.path}));
     if (!m.def.description.empty()) {
         lines.push_back("");
         lines.push_back(m.def.description);
     }
-    ui.dialog(m.meta.name.empty() ? m.def.title : m.meta.name, lines, {});
+    ui.dialog(m.meta.name.empty() ? partTitle(m.def) : m.meta.name, lines, {});
 }
 
 void App::exportPartModelDialog(const std::string& type) {
@@ -551,12 +567,12 @@ void App::exportPartModelDialog(const std::string& type) {
         m.meta.source = "json";
     }
     std::string data = partModelToJson(m).dump(1);
-    static const SDL_DialogFileFilter f[] = {{"designElectronics part", "dezpart"}};
+    const SDL_DialogFileFilter f[] = {{tr("filter.part").c_str(), "dezpart"}};
     showSaveDialog(sanitize(m.def.title) + ".dezpart", f, 1, [this, data](const std::string& path0) {
         std::string path = path0;
         if (path.rfind("content://", 0) != 0 && !endsWith(path, ".dezpart")) path += ".dezpart";
-        if (writeTextFile(path, data)) ui.toast("Exported model to " + path);
-        else ui.dialog("Export failed", {SDL_GetError()}, {});
+        if (writeTextFile(path, data)) ui.toast(trf("toast.exported_model", {path}));
+        else ui.dialog(tr("dlg.export_failed"), {SDL_GetError()}, {});
     });
 }
 
@@ -564,13 +580,13 @@ void App::deletePartModelConfirm(const std::string& type) {
     PartModel m;
     if (!userPartModel(type, m)) return;
     std::string name = m.meta.name.empty() ? type : m.meta.name;
-    ui.dialog("Delete this model?",
-              {name + " will be removed from the part library. Designs that already use it keep their own copy."},
-              {{"Cancel", []() {}, false},
-               {"Delete", [this, type]() {
+    ui.dialog(tr("dlg.delete_model.title"),
+              {trf("dlg.delete_model.body", {name})},
+              {{tr("dlg.cancel"), []() {}, false},
+               {tr("dlg.delete"), [this, type]() {
                     std::string err;
-                    if (!removePartModel(type, &err)) ui.dialog("Could not delete model", {err}, {});
-                    else ui.toast("Deleted model " + type);
+                    if (!removePartModel(type, &err)) ui.dialog(tr("dlg.delete_failed"), {err}, {});
+                    else ui.toast(trf("toast.deleted_model", {type}));
                 }, true}});
 }
 
@@ -588,43 +604,27 @@ void App::loadExample(size_t i) {
         for (auto& c : cam) c.valid = false;
         drcIssues.clear();
         simOn = false;
-        ui.toast("Loaded example: " + examples()[i].title);
+        ui.toast(trf("toast.loaded_example", {examples()[i].title}));
     });
 }
 
 void App::showAbout() {
-    ui.dialog("designElectronics " + std::string(kAppVersion),
-              {"An open-source electronics design app for desktop and mobile.",
-               "",
-               "Design on a breadboard, draw the schematic and lay out a PCB — every connection you make in one view appears in the others.",
-               "",
-               "Projects are single .dez files (plain JSON) that embed every part they use, so they open offline in any copy of designElectronics. No account, no server.",
-               "",
-               "Built with SDL3.",
-               "",
-               "Fonts: Sarasa Gothic SC © 2015-2025 Renzhi Li (be5invis), and JetBrains Maple Mono © 2025 Space Time, built on JetBrains Mono and Maple Mono.",
-               "",
-               "Both fonts are under the SIL Open Font License 1.1; the licence texts ship in assets/fonts/."},
-              {});
+    const char* keys[] = {"about.p1", "about.p2", "about.p3", "about.p4", "about.p5", "about.p6"};
+    std::vector<std::string> lines;
+    for (const char* k : keys) {
+        if (!lines.empty()) lines.push_back("");
+        lines.push_back(tr(k));
+    }
+    ui.dialog("designElectronics " + std::string(kAppVersion), lines, {});
 }
 
 void App::showShortcuts() {
-    ui.dialog("Keyboard & touch shortcuts",
-              {"Ctrl/⌘ + N, O, S — new, open, save (Shift+S: save as)",
-               "Ctrl/⌘ + Z / Shift+Z / Y — undo / redo",
-               "Ctrl/⌘ + C, X, V, D — copy, cut, paste, duplicate",
-               "Ctrl/⌘ + A — select all;  Delete/Backspace — delete",
-               "R / Shift+R — rotate 90° clockwise / counter-clockwise;  F — flip;  T — tidy wires",
-               "Arrow keys — nudge (Shift = 10×)",
-               "Ctrl/⌘ + 1, 2, 3 — breadboard, schematic, PCB view",
-               "+ / − / 0 — zoom in / out / fit;  wheel or pinch to zoom",
-               "Space + drag, middle or right drag — pan",
-               "",
-               "Drag from a pin or breadboard hole to draw a wire.",
-               "Drag a wire to bend it; double-click a bend point to remove it.",
-               "Click a dashed ratsnest line to turn it into a wire or trace.",
-               "Touch: one finger pans empty space, two fingers pinch-zoom, long-press for the context menu."},
-              {});
+    const char* keys[] = {"shortcut.1", "shortcut.2", "shortcut.3", "shortcut.4", "shortcut.5", "shortcut.6",
+                          "shortcut.7", "shortcut.8", "shortcut.9", "", "shortcut.10", "shortcut.11", "shortcut.12", "shortcut.13"};
+    std::vector<std::string> lines;
+    lines.reserve(sizeof keys / sizeof keys[0]);
+    for (const char* k : keys) lines.push_back(*k ? tr(k) : std::string());
+    ui.dialog(tr("dlg.shortcuts.title"), lines, {});
 }
 
 // ---------------------------------------------------------------------------
@@ -635,7 +635,7 @@ void App::deleteSelection() {
     if (selParts.empty() && selWires.empty() && selNotes.empty()) return;
     std::set<int> keep;
     for (int id : selParts) if (auto* p = doc.part(id)) if (p->locked) keep.insert(id);
-    if (!keep.empty()) ui.toast(std::to_string(keep.size()) + (keep.size() == 1 ? " locked part was" : " locked parts were") + " kept — unlock in the Layers panel to delete.");
+    if (!keep.empty()) ui.toast(trn("toast.locked_kept", (long long)keep.size()));
     if (keep.size() == selParts.size() && selWires.empty() && selNotes.empty()) return;
     checkpoint();
     for (int id : selWires) doc.removeWire(id);
@@ -700,7 +700,7 @@ void App::copySelection(bool cut) {
     clip.nextId = doc.nextId;
     SDL_SetClipboardText(clip.serialize(false).c_str());
     if (cut) deleteSelection();
-    else ui.toast("Copied " + std::to_string(clip.parts.size() + clip.wires.size() + clip.notes.size()) + " item(s)");
+    else ui.toast(trn("toast.copied", (long long)(clip.parts.size() + clip.wires.size() + clip.notes.size())));
 }
 
 void App::paste() {
@@ -709,7 +709,7 @@ void App::paste() {
     SDL_free(t);
     Document clip;
     std::string err;
-    if (text.empty() || !clip.deserialize(text, &err)) { ui.toast("Nothing to paste"); return; }
+    if (text.empty() || !clip.deserialize(text, &err)) { ui.toast(tr("toast.nothing_to_paste")); return; }
     checkpoint();
     std::map<int, int> idMap;
     selParts.clear(); selWires.clear(); selNotes.clear();
@@ -772,7 +772,7 @@ void App::addPart(const LibEntry& e, Vec2 world) {
     if (!def->inView(view)) {
         for (int v = 0; v < NUM_VIEWS; v++)
             if (def->inView(v)) {
-                ui.toast(def->title + " only exists in the " + viewName(v) + " view — switched views.");
+                ui.toast(trf("toast.not_in_view", {partTitle(*def), viewLabel(v)}));
                 setView(v);
                 Rect vp = rCanvas;
                 if (!cam[v].valid) fitView(v, vp);
@@ -803,7 +803,7 @@ void App::addNote() {
     n.view = view;
     n.size = Vec2(1600, 700);
     n.pos = toWorld(rCanvas.center()) - n.size / 2;
-    n.text = "Double-click to edit this note";
+    n.text = tr("note.placeholder");
     doc.notes.push_back(n);
     selParts.clear(); selWires.clear();
     selNotes = {n.id};
@@ -857,7 +857,7 @@ void App::tidyCommand() {
     int n = tidyWires(doc, view, only.empty() ? nullptr : &only);
     doc.syncWireEnds();
     changed();
-    ui.toast(n ? "Tidied " + std::to_string(n) + (n == 1 ? " wire" : " wires") : "No wires to tidy: a wire needs both ends on pins.");
+    ui.toast(n ? trn("toast.tidied", n) : tr("toast.nothing_to_tidy"));
 }
 
 // Moving or rotating parts stretches their wires; lay the tidy ones out again.
@@ -877,14 +877,14 @@ void App::runDrc() {
     drcIssues = ::runDrc(doc, conn);
     drcRev = doc.revision;
     if (drcIssues.empty()) {
-        ui.dialog("Design Rules Check", {"No problems found. Your board is ready for production — export Gerber files from File ▸ Export."}, {});
+        ui.dialog(tr("dlg.drc.title"), {tr("dlg.drc.ok")}, {});
         return;
     }
     std::vector<std::string> lines;
-    lines.push_back(std::to_string(drcIssues.size()) + " issue(s) found (highlighted in red on the board):");
+    lines.push_back(trn("dlg.drc.issues", (long long)drcIssues.size()));
     lines.push_back("");
     for (auto& i : drcIssues) lines.push_back("• " + i.message);
-    ui.dialog("Design Rules Check", lines, {});
+    ui.dialog(tr("dlg.drc.title"), lines, {});
 }
 
 void App::toggleSim() {
@@ -895,7 +895,7 @@ void App::toggleSim() {
     lastSimTicks = 0;
     simPressed.clear();
     if (simOn && view == PCB) setView(BB);
-    ui.toast(simOn ? "Simulator on — LEDs light up, meters read, overloaded parts smoke. Hold buttons to press them." : "Simulator off");
+    ui.toast(tr(simOn ? "toast.sim_on" : "toast.sim_off"));
 }
 
 void App::setView(int v) {
