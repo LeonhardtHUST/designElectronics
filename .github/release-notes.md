@@ -2,6 +2,11 @@ Free, open-source electronics design for desktop and phone: breadboard, schemati
 
 📖 **Documentation:** https://rorretbolt.github.io/designElectronics/ · 🌐 **Try it in your browser:** https://rorretbolt.github.io/designElectronics/#app
 
+## What's new in 0.5.2
+
+- **Chinese paragraphs wrap properly.** The text wrapper only broke lines at spaces, and Chinese has almost none, so it treated a whole sentence as one word: every line stopped early and left a ragged gap on the right. The About box and the part descriptions showed it worst. Lines now fill to the edge, and a comma or full stop never lands alone at the start of a line. English wraps exactly as before.
+- **The Chinese reads like Chinese.** 242 strings were rewritten: no em-dashes standing in for full stops, no semicolons between clauses, no hedging. Shorter sentences, plainer wording.
+
 ## What's new in 0.5.1
 
 - **A fraction of the download.** The two bundled fonts carried about 21 000 hanzi each and made up 40 MB of every package. They now ship as subsets — Latin, Greek, punctuation and arrows, box drawing, kana, and the 6 763 everyday hanzi — so the downloads drop from 25/28/24 MB to 9/12/8 MB (Linux/macOS/Windows), a 65% cut. Nothing looks different: the outlines and hinting are untouched, and the subset still holds more than twice the characters the interface can draw.
