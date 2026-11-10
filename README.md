@@ -10,6 +10,8 @@
 
 **[▶ Try it in your browser](https://rorretbolt.github.io/designElectronics/app/)** (works on phones) · [Documentation & screenshots](https://rorretbolt.github.io/designElectronics/)
 
+[中文说明](README.zh-CN.md) · [中文官网](https://rorretbolt.github.io/designElectronics/zh/)
+
 ## Download
 
 | macOS 11+ (Apple Silicon & Intel) | Windows 10/11 (64-bit) | Linux x86_64 |

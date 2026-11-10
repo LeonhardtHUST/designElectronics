@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>designElectronics：开源的面包板、原理图与 PCB 设计工具</title>
+<meta name="description" content="免费开源的电子设计应用，桌面与手机都能用。在虚拟面包板上搭电路、画原理图、排 PCB、实时仿真并导出 Gerber。离线可用，一个设计就是一个文件。">
+<link rel="canonical" href="https://rorretbolt.github.io/designElectronics/zh/">
+<link rel="alternate" hreflang="en" href="https://rorretbolt.github.io/designElectronics/">
+<link rel="alternate" hreflang="zh-CN" href="https://rorretbolt.github.io/designElectronics/zh/">
+<link rel="icon" type="image/svg+xml" href="../assets/logo.svg">
+<style>
+:root {
+  --bg:#f6f7f9; --surface:#fff; --surface-2:#eef1f6; --text:#1d2330; --muted:#5b6577; --border:#dde2ea;
+  --accent:#1f6fe5; --accent-soft:#e6f0ff; --ok:#1f9d55;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:#0c111c; --surface:#131a28; --surface-2:#192234; --text:#e6ebf4; --muted:#9aa6bb; --border:#263247;
+    --accent:#5b9bff; --accent-soft:#16294a; --ok:#3ecf8e;
+  }
+}
+* { box-sizing:border-box; }
+body {
+  margin:0; background:var(--bg); color:var(--text);
+  font:16px/1.7 -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+}
+a { color:var(--accent); text-decoration:none; }
+a:hover { text-decoration:underline; }
+header { border-bottom:1px solid var(--border); background:var(--surface); position:sticky; top:0; z-index:10; }
+.wrap { max-width:1040px; margin:0 auto; padding:0 20px; }
+.bar { display:flex; align-items:center; gap:12px; height:60px; }
+.brand { display:flex; align-items:center; gap:10px; font-weight:650; color:var(--text); }
+.spacer { flex:1; }
+.btn {
+  display:inline-block; padding:7px 14px; border-radius:8px; border:1px solid var(--border);
+  background:var(--surface); color:var(--text); font-size:14px;
+}
+.btn.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+main { padding:40px 0 72px; }
+h1 { font-size:clamp(28px, 4.4vw, 46px); line-height:1.22; margin:0 0 16px; letter-spacing:-.02em; }
+h2 { font-size:24px; margin:56px 0 14px; letter-spacing:-.01em; }
+h3 { font-size:16px; margin:0 0 6px; }
+p.lead { font-size:19px; color:var(--muted); margin:0 0 26px; }
+.hero { display:grid; grid-template-columns:1.05fr .95fr; gap:36px; align-items:center; }
+.hero img { width:100%; border-radius:14px; border:1px solid var(--border); background:var(--surface); }
+.grid { display:grid; gap:16px; }
+.cards { grid-template-columns:repeat(auto-fit, minmax(230px, 1fr)); }
+.card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:18px; }
+.card p { margin:0; color:var(--muted); font-size:14.5px; }
+.shots { grid-template-columns:repeat(auto-fit, minmax(300px, 1fr)); }
+.shots figure { margin:0; }
+.shots img { width:100%; border-radius:10px; border:1px solid var(--border); display:block; }
+.shots figcaption { color:var(--muted); font-size:13.5px; margin-top:8px; }
+pre {
+  background:#0f1729; color:#e4ecff; padding:16px 18px; border-radius:10px; overflow:auto;
+  font:13.5px/1.65 ui-monospace, "JetBrains Mono", Consolas, monospace;
+}
+ul.plain { padding-left:20px; }
+ul.plain li { margin:6px 0; }
+.note { background:var(--accent-soft); border-radius:10px; padding:14px 18px; font-size:14.5px; }
+footer { border-top:1px solid var(--border); padding:26px 0; color:var(--muted); font-size:14px; }
+@media (max-width:820px) { .hero { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap bar">
+    <a class="brand" href="../"><img src="../assets/logo.svg" alt="" width="30" height="30">designElectronics</a>
+    <span class="spacer"></span>
+    <a class="btn" href="../">English</a>
+    <a class="btn" href="https://github.com/rORrEtboLt/designElectronics">GitHub</a>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="hero">
+    <div>
+      <h1>从面包板到 PCB 的一体化设计工具，手机上也能用。</h1>
+      <p class="lead">在虚拟面包板上搭出电路，画出原理图，排布 PCB，然后实时仿真看它跑起来。桌面和手机都能用，完全离线，一个设计就是一个可分享的文件。</p>
+      <p>
+        <a class="btn primary" href="https://github.com/rORrEtboLt/designElectronics/releases">下载</a>
+        <a class="btn" href="../">完整文档（英文）</a>
+      </p>
+    </div>
+    <img src="../assets/img/breadboard.webp" alt="在虚拟面包板上搭好的 555 闪烁电路">
+  </section>
+
+  <h2>三个视图，一套连接</h2>
+  <div class="grid cards">
+    <div class="card"><h3>面包板</h3><p>把元件拖到板上，引脚自动插入孔中。从任意孔或引脚拖拽就能拉出导线，用过的孔会变绿。</p></div>
+    <div class="card"><h3>原理图</h3><p>面包板上建立的连接会以飞线出现在这里。点一下飞线就变成导线，也可以直接引脚对引脚地画。</p></div>
+    <div class="card"><h3>PCB</h3><p>摆放封装、设置板框尺寸，用双层 A* 自动布线，或者自己点飞线。导出前先跑一次设计规则检查。</p></div>
+  </div>
+
+  <h2>真的会跑起来</h2>
+  <div class="grid shots">
+    <figure>
+      <img src="../assets/img/schematic.webp" alt="原理图视图">
+      <figcaption>改进节点法求解电路：LED 会亮、万用表有读数、过载的元件会冒烟。</figcaption>
+    </figure>
+    <figure>
+      <img src="../assets/img/pcb.webp" alt="PCB 视图">
+      <figcaption>布好线的 PCB，可直接导出 Gerber、Excellon、BOM、网表和 SPICE。</figcaption>
+    </figure>
+  </div>
+
+  <h2>还能写程序</h2>
+  <div class="grid cards">
+    <div class="card"><h3>Arduino / ESP32</h3><p>内置一个 Arduino C++ 子集解释器：逐行解释执行草图，delay、PWM、串口、OLED 绘图都能仿真，仿真时能看到执行到哪一行。</p></div>
+    <div class="card"><h3>烧到真板子</h3><p>桌面版通过 arduino-cli 编译并上传到真实开发板，串口监视器同样可用。</p></div>
+    <div class="card"><h3>AI 助手</h3><p>接上本机的 Claude Code、Codex 或 Gemini CLI，用一句话描述电路，它通过 MCP 在你的设计里加元件、连线、写程序。</p></div>
+  </div>
+
+  <h2>版本历史与分享</h2>
+  <ul class="plain">
+    <li>每次保存都会在本地留一个版本，可以随时回看和恢复。</li>
+    <li>可同步到 GitHub 的私有仓库，换台设备也能接着改。</li>
+    <li>可以把整个设计打包进一个链接，或者用 <code>&lt;iframe&gt;</code> 嵌进博客——读者能切视图、缩放、跑仿真，什么都无需上传。</li>
+  </ul>
+
+  <h2>快速开始</h2>
+  <p>从 <a href="https://github.com/rORrEtboLt/designElectronics/releases">Releases</a> 下载对应平台的压缩包，解压后直接运行。也可以用网页版，无需安装。</p>
+  <pre>Windows   designElectronics-Windows-x64.zip   → 解压，运行 designElectronics.exe
+macOS     designElectronics-macOS.zip         → 打开 designElectronics.app
+Linux     designElectronics-Linux-x86_64.tar.gz
+网页版    直接打开 /app/ ，或在自己电脑上构建（见 docs/BUILDING.md）</pre>
+  <p>自己编译只需要 CMake 3.20+ 和一个 C++17 编译器，依赖只有 SDL3 与 SDL3_ttf：</p>
+  <pre>git clone https://github.com/rORrEtboLt/designElectronics
+cd designElectronics
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j</pre>
+
+  <h2>界面语言</h2>
+  <div class="note">
+    应用内置中英文界面，可在 <b>视图 ▸ 语言</b> 中切换，选择会被记住。翻译以 JSON 语言包形式编译进二进制；把改好的
+    <code>i18n/zh-CN.json</code> 放到程序旁的 <code>i18n/</code> 目录即可覆盖，无需重新编译。
+    想补翻译或加新语言：运行 <code>designElectronics --export-i18n ./i18n</code> 导出完整模板，
+    改完用 <code>python3 tools/i18n_check.py --strict</code> 自检。
+  </div>
+
+  <h2>许可</h2>
+  <p>MIT 许可，完全免费，无需账号，不联网也能用。字体为 Sarasa Gothic SC 与 JetBrains Maple Mono，均采用 SIL Open Font License 1.1。</p>
+</main>
+
+<footer>
+  <div class="wrap">
+    <a href="../">English site</a> ·
+    <a href="https://github.com/rORrEtboLt/designElectronics">GitHub</a> ·
+    <a href="https://github.com/rORrEtboLt/designElectronics/blob/main/LICENSE">MIT License</a>
+  </div>
+</footer>
+</body>
+</html>

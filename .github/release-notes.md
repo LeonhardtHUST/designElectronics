@@ -2,6 +2,14 @@ Free, open-source electronics design for desktop and phone: breadboard, schemati
 
 📖 **Documentation:** https://rorretbolt.github.io/designElectronics/ · 🌐 **Try it in your browser:** https://rorretbolt.github.io/designElectronics/#app
 
+## What's new in 0.5
+
+- **中文界面.** The whole app — menus, toolbar, inspector, dialogs, simulation warnings, design-rule messages, the Arduino interpreter's errors and the AI panel — now speaks English and Simplified Chinese. Switch under **View ▸ Language**; the choice is remembered, and a first launch follows your system language.
+- **A format, not a second language baked in.** Every string is a key in `i18n/*.json`, compiled into the binary so the web and mobile builds carry both languages with nothing extra to ship. Drop `i18n/xx.json` next to the executable and a new language appears in the menu — no rebuild, no code change.
+- **The parts library too.** All 352 part types are translated — names, categories, property labels and the long notes for the 74xx/CD4000 logic, the boards and the modules — while a design's own text (labels, notes, values like `470Ω` or `Yellow`) stays exactly as you wrote it. A design made in one language opens identically in the other.
+- **Authoring tools.** `designElectronics --export-i18n ./i18n` writes a complete template, including the part-library keys a source scan cannot see; `tools/i18n_check.py --strict`, now part of CI, catches a missing key, a mismatched `{0}` count and keys nobody uses.
+- **A Chinese README and landing page** — [README.zh-CN.md](https://github.com/LeonhardtHUST/designElectronics/blob/main/README.zh-CN.md) · [中文介绍](https://rorretbolt.github.io/designElectronics/zh/).
+
 ## What's new in 0.4
 
 - **Your own components.** Import a `.dezpart` model — name, datasheet, pins, internal connections, silkscreen, a drawing for each view and the simulation model — and it joins the parts bin under **Custom** for every project, not just the one you imported it in. Export any part, built-in ones included, to start from something that already looks right. [Format reference](https://github.com/LeonhardtHUST/designElectronics/blob/main/docs/PART_MODELS.md).

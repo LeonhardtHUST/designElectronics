@@ -87,6 +87,11 @@ jobs:
             Linux)   echo "exe=build/designElectronics" >> "$GITHUB_OUTPUT" ;;
           esac
 
+      - name: Translations check
+        if: runner.os != 'Windows'  # the Windows runner has no python3 on PATH
+        shell: bash
+        run: python3 tools/i18n_check.py --strict
+
       - name: Self-test
         shell: bash
         run: |
