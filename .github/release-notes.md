@@ -2,6 +2,11 @@ Free, open-source electronics design for desktop and phone: breadboard, schemati
 
 📖 **Documentation:** https://rorretbolt.github.io/designElectronics/ · 🌐 **Try it in your browser:** https://rorretbolt.github.io/designElectronics/#app
 
+## What's new in 0.5.1
+
+- **A quarter of the download.** The two bundled fonts carried about 21 000 hanzi each and made up 40 MB of every package. They now ship as subsets — Latin, Greek, punctuation and arrows, box drawing, kana, and the 6 763 everyday hanzi — so the Windows download drops from 24 MB to about 6 MB. Nothing looks different: the outlines and hinting are untouched, and the subset still holds more than twice the characters the interface can draw.
+- **Rare characters still render.** Anything outside the subset — traditional Chinese, an uncommon name, a Japanese kanji — is drawn by the system font: Microsoft YaHei on Windows, PingFang on macOS, Noto CJK on Linux. The web and mobile builds have no system fonts to fall back on; `tools/subset_fonts.py --set gbk` rebuilds the fonts with the wider repertoire.
+
 ## What's new in 0.5
 
 - **中文界面.** The whole app — menus, toolbar, inspector, dialogs, simulation warnings, design-rule messages, the Arduino interpreter's errors and the AI panel — now speaks English and Simplified Chinese. Switch under **View ▸ Language**; the choice is remembered, and a first launch follows your system language.

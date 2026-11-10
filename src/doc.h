@@ -12,7 +12,7 @@
 constexpr const char* kFileFormat = "designElectronics";
 constexpr int kFileVersion = 1;
 constexpr const char* kFileExt = ".dez";
-constexpr const char* kAppVersion = "0.5.0";
+constexpr const char* kAppVersion = "0.5.1";
 
 struct PartInst {
     int id = 0;
