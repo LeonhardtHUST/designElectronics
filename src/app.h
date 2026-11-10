@@ -183,6 +183,9 @@ public:
     void openDialog();
     void exportFile(const std::string& kind);
     void importPartDialog();
+    void showPartModelInfo(const std::string& type);
+    void exportPartModelDialog(const std::string& type);
+    void deletePartModelConfirm(const std::string& type);
     void loadExample(size_t i);
     void autosave(bool force);
     std::string autosavePath() const;

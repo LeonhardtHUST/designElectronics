@@ -94,11 +94,17 @@ pin, or within 3 mil of another wire end in the same view, connects to it.
 ## Part definitions (`library`, `.dezpart`)
 
 The `library` array holds one definition per part type used. A `.dezpart` file
-holds a single definition:
+holds a single definition; the model format (metadata, datasheet, tags,
+silkscreen, the user library and the MCP tools that manage it) is documented in
+[PART_MODELS.md](PART_MODELS.md):
 
 ```jsonc
-{ "format": "designElectronics-part", "version": 1, "part": { ...definition... } }
+{ "format": "designElectronics-part", "version": 2,
+  "meta": { "id": "my_sensor", "name": "My Sensor", "datasheet": "https://…" },
+  "part": { ...definition... } }
 ```
+
+Older files with only `"part"` (version 1), and bare definitions, still load.
 
 A definition:
 

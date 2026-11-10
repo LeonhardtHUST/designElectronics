@@ -1,5 +1,6 @@
 #include "app.h"
 #include "logo.h"
+#include "partmodels.h"
 
 #include <algorithm>
 #include <cmath>
@@ -47,6 +48,12 @@ bool App::init(int argc, char** argv) {
     ui.g = &g;
     ui.in = &in;
     ui.window = win;
+
+    // Installed part models live outside the project, so they are available in
+    // every design and to the MCP tools.
+    std::vector<std::string> modelProblems;
+    loadUserPartModels(&modelProblems);
+    for (auto& p : modelProblems) SDL_Log("part library: %s", p.c_str());
 
     std::string openPath;
     for (int i = 1; i < argc; i++) {
@@ -245,6 +252,7 @@ void App::confirmDiscard(std::function<void()> then) {
 void App::newDoc() {
     confirmDiscard([this]() {
         clearCustomParts();
+        reloadUserPartModels();  // the installed library survives "New design"
         customEntries.clear();
         newProjectContents(doc);
         filePath.clear();
@@ -273,16 +281,28 @@ bool App::loadFile(const std::string& path) {
     Json j = Json::parse(text, &perr);
     if (!perr.empty()) { ui.dialog("Could not open file", {"The file is not valid designElectronics JSON.", perr}, {}); return false; }
     if (j["format"].str() == "designElectronics-part" || (j.has("pins") && j.has("graphics"))) {
-        PartDef def;
+        PartModel m;
         std::string err;
-        const Json& pj = j.has("part") ? j["part"] : j;
-        if (!partDefFromJson(pj, def, &err)) { ui.dialog("Could not import part", {err}, {}); return false; }
-        registerCustomPart(def);
-        bool exists = false;
-        for (auto& e : customEntries) if (e.type == def.type) exists = true;
-        if (!exists) customEntries.push_back({def.type, def.title, "Custom", {}});
+        if (!partModelFromJson(j, m, &err)) { ui.dialog("Could not import part", {err}, {}); return false; }
+        if (isCustomType(m.def.type)) {
+            PartModel copy = m;
+            ui.dialog("Already in the part library",
+                      {"\"" + m.meta.name + "\" (" + m.def.type + ") is already installed. Replace it with this file?"},
+                      {{"Cancel", []() {}, false},
+                       {"Replace", [this, copy]() {
+                            std::string e;
+                            if (!installPartModel(copy, true, &e, nullptr)) { ui.dialog("Could not import part", {e}, {}); return; }
+                            category = -2;
+                            ui.toast("Replaced \"" + copy.meta.name + "\" in the part library.");
+                        }, true}});
+            return true;
+        }
+        std::vector<std::string> warnings;
+        if (!installPartModel(m, false, &err, &warnings)) { ui.dialog("Could not import part", {err}, {}); return false; }
         category = -2;
-        ui.toast("Imported part \"" + def.title + "\" — find it under Custom in the parts bin.");
+        std::string msg = "Imported \"" + m.meta.name + "\" into the part library.";
+        if (!warnings.empty()) msg += " " + warnings.front();
+        ui.toast(msg, 5);
         return true;
     }
     std::string err;
@@ -467,13 +487,16 @@ void App::exportFile(const std::string& kind) {
         if (selParts.size() != 1) { ui.toast("Select one part to export its definition."); return; }
         const PartInst* p = doc.part(*selParts.begin());
         if (!p) return;
-        Json j = Json::object();
-        j.set("format", "designElectronics-part");
-        j.set("version", kFileVersion);
         PartDef def = *p->def;
         def.defaults = mergedProps(p->type, p->props);
-        j.set("part", partDefToJson(def));
-        std::string data = j.dump(1);
+        PartModel m;
+        m.def = def;
+        m.meta.id = def.type;
+        m.meta.name = def.title;
+        m.meta.category = def.category;
+        m.meta.datasheet = def.datasheet;
+        m.meta.source = "json";
+        std::string data = partModelToJson(m).dump(1);
         static const SDL_DialogFileFilter f[] = {{"designElectronics part", "dezpart"}};
         showSave(this, sanitize(p->def->title) + ".dezpart", f, 1, [this, data](const std::string& path0) {
             std::string path = path0;
@@ -481,6 +504,74 @@ void App::exportFile(const std::string& kind) {
             if (writeTextFile(path, data)) ui.toast("Exported part definition to " + path);
         });
     }
+}
+
+// ---------------------------------------------------------------------------
+// Part models: the custom parts in the user library
+// ---------------------------------------------------------------------------
+
+void App::showPartModelInfo(const std::string& type) {
+    PartModel m;
+    if (!userPartModel(type, m)) {
+        PartDefPtr d = getPartDef(type, {});
+        if (!d) return;
+        m.def = *d;
+        m.meta.id = type;
+        m.meta.name = d->title;
+        m.meta.category = d->category;
+        m.meta.datasheet = d->datasheet;
+        m.meta.source = "built-in";
+    }
+    std::vector<std::string> lines;
+    lines.push_back("Id: " + m.def.type);
+    lines.push_back("Category: " + m.def.category);
+    lines.push_back(std::to_string(m.def.pins.size()) + " pins" +
+                    (m.def.sim.empty() ? ", no simulator model" : ", simulator model " + m.def.sim));
+    if (!m.def.silkscreen.empty()) lines.push_back("Silkscreen: " + m.def.silkscreen);
+    if (!m.meta.datasheet.empty()) lines.push_back("Datasheet: " + m.meta.datasheet);
+    if (!m.def.tags.empty()) lines.push_back("Tags: " + m.def.tags);
+    if (!m.path.empty()) lines.push_back("File: " + m.path);
+    if (!m.def.description.empty()) {
+        lines.push_back("");
+        lines.push_back(m.def.description);
+    }
+    ui.dialog(m.meta.name.empty() ? m.def.title : m.meta.name, lines, {});
+}
+
+void App::exportPartModelDialog(const std::string& type) {
+    PartModel m;
+    if (!userPartModel(type, m)) {
+        PartDefPtr d = getPartDef(type, {});
+        if (!d) return;
+        m.def = *d;
+        m.meta.id = type;
+        m.meta.name = d->title;
+        m.meta.category = d->category;
+        m.meta.datasheet = d->datasheet;
+        m.meta.source = "json";
+    }
+    std::string data = partModelToJson(m).dump(1);
+    static const SDL_DialogFileFilter f[] = {{"designElectronics part", "dezpart"}};
+    showSaveDialog(sanitize(m.def.title) + ".dezpart", f, 1, [this, data](const std::string& path0) {
+        std::string path = path0;
+        if (path.rfind("content://", 0) != 0 && !endsWith(path, ".dezpart")) path += ".dezpart";
+        if (writeTextFile(path, data)) ui.toast("Exported model to " + path);
+        else ui.dialog("Export failed", {SDL_GetError()}, {});
+    });
+}
+
+void App::deletePartModelConfirm(const std::string& type) {
+    PartModel m;
+    if (!userPartModel(type, m)) return;
+    std::string name = m.meta.name.empty() ? type : m.meta.name;
+    ui.dialog("Delete this model?",
+              {name + " will be removed from the part library. Designs that already use it keep their own copy."},
+              {{"Cancel", []() {}, false},
+               {"Delete", [this, type]() {
+                    std::string err;
+                    if (!removePartModel(type, &err)) ui.dialog("Could not delete model", {err}, {});
+                    else ui.toast("Deleted model " + type);
+                }, true}});
 }
 
 void App::loadExample(size_t i) {

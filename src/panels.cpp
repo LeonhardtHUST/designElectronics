@@ -4,6 +4,7 @@
 
 #include "app.h"
 #include "logo.h"
+#include "partmodels.h"
 
 namespace {
 MenuItem item(const std::string& l, std::function<void()> a, const std::string& sc = "", bool enabled = true, bool checked = false) {
@@ -246,6 +247,9 @@ void App::drawTopBar() {
 
 void App::drawPartsBin(Rect r) {
     float s = ui.s;
+    // the registry holds the installed library plus the parts a project embeds;
+    // refresh here so an import or a delete shows up immediately
+    customEntries = customPartEntries();
     g.fillRect(r, ui.th.panel);
     g.fillRect({r.x, r.y, std::max(1.f, s), r.h}, ui.th.border);
     float pad = 10 * s;
@@ -322,6 +326,26 @@ void App::drawPartsBin(Rect r) {
         for (size_t li = 0; li < lines.size() && li < 2; li++)
             g.text({cell.center().x, cell.b() - 30 * s + (float)li * 14 * s}, lines[li], 11.5f * s, ui.th.text, 1);
         ui.tooltip(cell, def ? def->title + " — " + def->description : e.title);
+        // right-click a part: inspect, export or (for an installed model) delete it
+        if (in.rightPressed && cell.contains(in.mouse) && !ui.blocking()) {
+            bool custom = idx >= (int)lib.size();
+            std::string type = e.type;
+            auto item = [](const std::string& label, std::function<void()> action) {
+                MenuItem mi;
+                mi.label = label;
+                mi.action = std::move(action);
+                return mi;
+            };
+            std::vector<MenuItem> menu;
+            menu.push_back(item("Model Info…", [this, type]() { showPartModelInfo(type); }));
+            menu.push_back(item("Export Model…", [this, type]() { exportPartModelDialog(type); }));
+            PartModel installed;
+            if (custom && userPartModel(type, installed)) {
+                menu.push_back(MenuItem::sep());
+                menu.push_back(item("Delete from Library", [this, type]() { deletePartModelConfirm(type); }));
+            }
+            ui.openMenu(Rect(in.mouse.x, in.mouse.y, 0, 0), menu);
+        }
         // start dragging onto the canvas (mouse); touch uses tap-to-add
         if (!in.touch && in.down && binDrag < 0 && cell.contains(in.pressPos) && area.contains(in.pressPos) && dist(in.mouse, in.pressPos) > 6 * s && !ui.blocking())
             binDrag = idx;
