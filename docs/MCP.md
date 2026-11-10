@@ -59,8 +59,12 @@ Then ask things like:
 
 | Tool | What it does |
 | --- | --- |
-| `list_parts` | Search the parts library by words and/or category. |
-| `get_part_info` | Pins, properties (with allowed values) and simulation model of a part type. |
+| `list_parts` | Search the parts library by words and/or category, built-in and custom. |
+| `get_part_info` | Pins, properties (with allowed values), datasheet and simulation model of a part type. |
+| `list_part_models` / `get_part_model` | List the models in the library (built-in and installed) and read one in full: metadata, pins in every view, buses, drawings and simulation definition. |
+| `import_part_model` | Install a model from a `.dezpart` file, a model document, or a datasheet block (`[74HC03]` + `package = DIP-14` + `pins = …`). Validates it, writes it to the user library and registers it. |
+| `export_part_model` | Write a model to a `.dezpart` file (or return the JSON inline). Works for built-in parts too, which is the easy way to start a custom one. |
+| `delete_part_model` | Remove an installed model. Built-in parts are never deleted. |
 | `new_design` / `open_design` / `load_example` / `save_design` | Start, open, load a built-in example, save as `.dez`. Every save (with an optional `message`) is also kept in the app's Version History. |
 | `get_design` | Parts (labels, properties, positions), wires, nets and routing status per view, including which connections are still unrouted. |
 | `add_part` | Add a part. Without `x`/`y` (mils) parts fill tidy rows in every view. Returns its pins. |

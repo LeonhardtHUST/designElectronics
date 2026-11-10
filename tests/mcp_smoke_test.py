@@ -9,7 +9,8 @@ import json, subprocess, sys, tempfile
 exe = sys.argv[1]
 out = sys.argv[2] if len(sys.argv) > 2 else tempfile.mkdtemp(prefix="de-mcp-")
 import os
-env = dict(os.environ, DE_HISTORY_DIR=os.path.join(out, "history"))  # keep test versions out of the user's history
+env = dict(os.environ, DE_HISTORY_DIR=os.path.join(out, "history"),
+           DE_PARTS_DIR=os.path.join(out, "parts"))  # keep test versions and models out of the user's library
 p = subprocess.Popen([exe, "--mcp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, env=env)
 n = 0
 def rpc(method, params=None, notify=False):
@@ -58,7 +59,23 @@ tool("save_design", path=out + "/mcp_test.dez")
 d = tool("get_design")
 print("routing:", d["routing"])
 print("LED1 brightness:", sim["ledBrightness"])
+
+# --- part models: import a datasheet block, use it, export it, delete it ---
+block = ("[SMOKECHIP]\ntitle = Smoke Chip\ncategory = Logic\ndesc = Made by the smoke test.\n"
+         "package = DIP-8\npins = A B C D E F G H\nsim = logic\nsimParams = NAND 1,2>3\n")
+imported = tool("import_part_model", block=block)
+models = tool("list_part_models", query="smokechip")
+full = tool("get_part_model", type="smokechip")
+chip = tool("add_part", type="smokechip")
+tool("export_part_model", type="smokechip", path=out + "/smokechip.dezpart")
+removed = tool("delete_part_model", type="smokechip")
+after = tool("list_part_models", query="smokechip")
+model_ok = bool(imported and imported.get("ok") and full and full.get("meta", {}).get("id") == "smokechip"
+                and models and models.get("count") == 1 and chip and removed and removed.get("ok")
+                and after and after.get("count") == 0)
+print("part models:", "ok" if model_ok else "FAILED")
+
 p.stdin.close(); p.wait()
-ok = sim["ledBrightness"].get("LED1", 0) > 0.2 and all(v["connectionsToRoute"] == 0 for v in d["routing"].values())
+ok = sim["ledBrightness"].get("LED1", 0) > 0.2 and all(v["connectionsToRoute"] == 0 for v in d["routing"].values()) and model_ok
 print("MCP smoke test", "passed" if ok else "FAILED")
 sys.exit(0 if ok else 1)

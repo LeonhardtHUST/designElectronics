@@ -33,6 +33,7 @@
 #include "history.h"
 #include "mcp.h"
 #include "net.h"
+#include "partmodels.h"
 #include "tools.h"
 
 namespace {
@@ -305,6 +306,33 @@ Json Server::tools() const {
     add("get_part_info", "Pins, properties (with allowed values) and simulation behaviour of a part type.",
         schema({{"type", prop("string", "Part type id from list_parts")}, {"properties", prop("object", "Optional property values, e.g. {\"pins\":\"16\"}")}},
                {"type"}));
+    add("list_part_models",
+        "List part models: the built-in library plus the models installed from .dezpart files. Returns the id, name, "
+        "category, pin count and source of each one. Use get_part_model for the full definition.",
+        schema({{"query", prop("string", "Words to match in the name, id, category or tags")},
+                {"scope", prop("string", "all (default), builtin or custom")}}));
+    add("get_part_model",
+        "The full model of one part: metadata (name, category, datasheet, tags, author), pins with their position in every "
+        "view, internal connections (buses), the drawing primitives and the simulation definition. This is the document "
+        "export_part_model writes and import_part_model accepts.",
+        schema({{"type", prop("string", "Part type id from list_part_models")}}, {"type"}));
+    add("import_part_model",
+        "Import a part model: a file (path), a model document (json), or one datasheet block in the parts/*.txt format "
+        "(`block`, e.g. \"[74HC03]\\ntitle = Quad NAND\\npackage = DIP-14\\npins = 1A 1B 1Y …\"). The model is validated, "
+        "written to the user library and registered, so list_parts and add_part can use it immediately. A type that "
+        "collides with a built-in part needs \"replaces\": true in its meta.",
+        schema({{"path", prop("string", "File to read (.dezpart or .json)")},
+                {"json", prop("object", "Model document, as returned by get_part_model")},
+                {"block", prop("string", "One [PART] datasheet block")},
+                {"overwrite", prop("boolean", "Replace the installed model of the same type")}}));
+    add("export_part_model",
+        "Write a part model to a .dezpart file (without a path the JSON is returned inline). Works for built-in parts too, "
+        "which is the easiest way to start a custom model from an existing one.",
+        schema({{"type", prop("string", "Part type id from list_part_models")},
+                {"path", prop("string", "Output file; omit to get the JSON inline")}},
+               {"type"}));
+    add("delete_part_model", "Delete a user model from the library. Built-in parts can't be deleted.",
+        schema({{"type", prop("string", "Part type id")}}, {"type"}));
     add("new_design", "Start a new, empty design (discards the in-memory design).",
         schema({{"title", prop("string", "Design title")}, {"notes", prop("string", "Project description")}}));
     add("open_design", "Open a .dez file.", schema({{"path", prop("string", "Path to a .dez file")}}, {"path"}));
@@ -376,7 +404,9 @@ Json Server::tools() const {
 
 // Tools that change the design get undo checkpoints / redraws in the app.
 Json Server::call(const std::string& name, const Json& a) {
-    static const std::set<std::string> readOnly = {"list_parts", "get_part_info", "get_design", "simulate", "run_drc", "export"};
+    static const std::set<std::string> readOnly = {"list_parts", "get_part_info", "get_design", "simulate", "run_drc", "export",
+                                                  "list_part_models", "get_part_model", "export_part_model",
+                                                  "import_part_model", "delete_part_model"};
     bool edits = !readOnly.count(name);
     bool replaces = name == "new_design" || name == "open_design" || name == "load_example";
     if (edits && beforeEdit) beforeEdit();
@@ -403,6 +433,7 @@ Json Server::callImpl(const std::string& name, const Json& a) {
         }
         Json out = Json::array();
         int total = 0;
+        std::set<std::string> seen;
         for (auto& e : partLibrary()) {
             if (!cat.empty() && lower(e.category) != cat) continue;
             std::string hay = lower(e.title + " " + e.type + " " + e.category);
@@ -412,6 +443,7 @@ Json Server::callImpl(const std::string& name, const Json& a) {
             bool ok = true;
             for (auto& w : words) if (hay.find(w) == std::string::npos) ok = false;
             if (!ok) continue;
+            seen.insert(e.type);
             if (++total > 80) continue;
             Json j = Json::object();
             j.set("type", e.type);
@@ -424,12 +456,31 @@ Json Server::callImpl(const std::string& name, const Json& a) {
             }
             out.push(j);
         }
+        // Custom models (imported .dezpart files and installed models) are not in
+        // partLibrary(); list them too so an AI can use what the user authored.
+        for (auto& e : customPartEntries()) {
+            if (seen.count(e.type)) continue;
+            if (!cat.empty() && lower(e.category) != cat) continue;
+            PartDefPtr d = getPartDef(e.type, {});
+            std::string hay = lower(e.title + " " + e.type + " " + e.category + (d ? " " + d->tags : ""));
+            bool ok = true;
+            for (auto& w : words) if (hay.find(w) == std::string::npos) ok = false;
+            if (!ok) continue;
+            if (++total > 80) continue;
+            Json j = Json::object();
+            j.set("type", e.type);
+            j.set("title", e.title);
+            j.set("category", e.category);
+            j.set("custom", true);
+            out.push(j);
+        }
         Json r = Json::object();
         r.set("parts", out);
         if (total > 80) r.set("note", std::to_string(total) + " matches; showing 80. Narrow the query.");
         if (q.empty() && cat.empty()) {
             Json cats = Json::array();
             for (auto& c : partCategories()) cats.push(c);
+            cats.push("Custom");
             r.set("categories", cats);
         }
         return r;
@@ -443,6 +494,10 @@ Json Server::callImpl(const std::string& name, const Json& a) {
         j.set("title", d->title);
         j.set("category", d->category);
         j.set("description", d->description);
+        if (!d->datasheet.empty()) j.set("datasheet", d->datasheet);
+        if (!d->tags.empty()) j.set("tags", d->tags);
+        if (!d->silkscreen.empty()) j.set("silkscreen", d->silkscreen);
+        j.set("custom", isCustomType(type));
         j.set("simulation", d->sim.empty() ? std::string("none (pinout only)") : d->sim);
         Json props = Json::object();
         for (auto& kv : mergedProps(type, propsFromJson(a["properties"]))) props.set(kv.first, kv.second);
@@ -473,6 +528,143 @@ Json Server::callImpl(const std::string& name, const Json& a) {
             j.set("pins", pinList(*d));
         }
         return j;
+    }
+    if (name == "list_part_models") {
+        std::string q = lower(a["query"].str()), scope = lower(a["scope"].str("all"));
+        if (scope.empty()) scope = "all";
+        Json out = Json::array();
+        std::set<std::string> seen;
+        auto add = [&](const LibEntry& e, const char* source) {
+            PartDefPtr d = getPartDef(e.type, e.props);
+            std::string hay = lower(e.title + " " + e.type + " " + e.category + (d ? " " + d->tags : ""));
+            if (!q.empty() && hay.find(q) == std::string::npos) return;
+            Json j = Json::object();
+            j.set("type", e.type);
+            j.set("name", e.title);
+            j.set("category", e.category);
+            j.set("source", source);
+            if (d) j.set("pins", (int)d->pins.size());
+            if (std::string(source) == "custom") {
+                PartModel m;
+                if (userPartModel(e.type, m)) {
+                    j.set("installed", true);
+                    j.set("file", m.path);
+                    if (!m.meta.datasheet.empty()) j.set("datasheet", m.meta.datasheet);
+                    if (!m.meta.tags.empty()) {
+                        Json t = Json::array();
+                        for (auto& s : m.meta.tags) t.push(s);
+                        j.set("tags", t);
+                    }
+                } else {
+                    j.set("installed", false);
+                }
+            }
+            out.push(j);
+        };
+        if (scope != "custom")
+            for (auto& e : partLibrary()) {
+                seen.insert(e.type);
+                add(e, "builtin");
+            }
+        if (scope != "builtin")
+            for (auto& e : customPartEntries()) {
+                if (seen.count(e.type)) continue;
+                add(e, "custom");
+            }
+        Json r = Json::object();
+        r.set("models", out);
+        r.set("count", (int)out.size());
+        return r;
+    }
+    if (name == "get_part_model") {
+        std::string type = a["type"].str();
+        PartModel m;
+        if (!userPartModel(type, m)) {
+            PartDefPtr d = getPartDef(type, {});
+            if (!d) fail("unknown part type '" + type + "' (use list_part_models)");
+            m.def = *d;
+            m.meta.id = type;
+            m.meta.name = d->title;
+            m.meta.category = d->category;
+            m.meta.datasheet = d->datasheet;
+            m.meta.source = "builtin";
+            std::string cur;
+            for (char c : d->tags) {
+                if (c == ' ' || c == ',') {
+                    if (!cur.empty()) m.meta.tags.push_back(cur);
+                    cur.clear();
+                } else {
+                    cur += c;
+                }
+            }
+            if (!cur.empty()) m.meta.tags.push_back(cur);
+        }
+        return partModelToJson(m);
+    }
+    if (name == "import_part_model") {
+        PartModel m;
+        std::string err;
+        std::string path = a["path"].str();
+        if (!path.empty()) {
+            if (!readPartModelFile(path, m, &err)) fail(err);
+        } else if (a["json"].isObject()) {
+            if (!partModelFromJson(a["json"], m, &err)) fail(err);
+        } else if (!a["block"].str().empty()) {
+            Json doc = Json::object();
+            doc.set("format", "designElectronics-part");
+            doc.set("version", 2);
+            doc.set("block", a["block"].str());
+            if (!partModelFromJson(doc, m, &err)) fail(err);
+        } else {
+            fail("give a file path, a json model or a datasheet block");
+        }
+        std::vector<std::string> warns;
+        if (!installPartModel(m, a["overwrite"].boolean(), &err, &warns)) fail(err);
+        Json r = Json::object();
+        r.set("ok", true);
+        r.set("type", m.def.type);
+        r.set("name", m.meta.name);
+        r.set("pins", (int)m.def.pins.size());
+        r.set("file", partModelPathFor(m.def.type));
+        if (!warns.empty()) {
+            Json w = Json::array();
+            for (auto& s : warns) w.push(s);
+            r.set("warnings", w);
+        }
+        r.set("hint", "Add it with add_part {\"type\": \"" + m.def.type + "\"}.");
+        return r;
+    }
+    if (name == "export_part_model") {
+        std::string type = a["type"].str();
+        PartModel m;
+        if (!userPartModel(type, m)) {
+            PartDefPtr d = getPartDef(type, {});
+            if (!d) fail("unknown part type '" + type + "' (use list_part_models)");
+            m.def = *d;
+            m.meta.id = type;
+            m.meta.name = d->title;
+            m.meta.category = d->category;
+            m.meta.datasheet = d->datasheet;
+            m.meta.source = "builtin";
+        }
+        std::string path = a["path"].str();
+        if (path.empty()) return partModelToJson(m);
+        std::string err;
+        if (!writePartModelFile(path, m, &err)) fail(err);
+        Json r = Json::object();
+        r.set("ok", true);
+        r.set("path", path);
+        r.set("type", m.def.type);
+        return r;
+    }
+    if (name == "delete_part_model") {
+        std::string type = a["type"].str();
+        std::string err;
+        if (!removePartModel(type, &err)) fail(err);
+        Json r = Json::object();
+        r.set("ok", true);
+        r.set("removed", type);
+        return r;
     }
     if (name == "new_design") {
         doc_.clear();
@@ -954,6 +1146,7 @@ int runMcpServer(int connectPort, const std::string& token) {
     if (!proto) return 1;
 
     Server server;
+    loadUserPartModels();  // the user's .dezpart models are usable from the first call
 #ifdef DE_HAVE_NET
     // proxy mode: tool calls go to the running app over 127.0.0.1
     net::Sock appSock = net::kInvalid;
