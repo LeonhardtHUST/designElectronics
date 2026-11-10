@@ -169,7 +169,7 @@ void App::drawEmbedBar() {
     if (showTitle) {
         std::string t = doc.title;
         float maxW = tx - x - 12 * s;
-        while (t.size() > 3 && g.textWidth(t, 14 * s) > maxW) { t.resize(t.size() - 4); t += "…"; }
+        t = g.ellipsize(t, 14 * s, maxW);
         g.text({x, r.center().y}, t, 14 * s, th.text, 0);
     }
     Rect seg(tx, y, 3 * tabW, h);
@@ -317,7 +317,7 @@ EM_JS(void, de_js_edit_init, (), {
         el.spellcheck = false;
         Object.assign(el.style, { position: 'fixed', display: 'none', zIndex: 10, margin: 0, padding: 0, border: 0, outline: 'none',
             background: 'transparent', resize: 'none', boxSizing: 'border-box', overflow: 'hidden',
-            fontFamily: 'Lato, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' });
+            fontFamily: '"Sarasa Gothic SC", "Noto Sans SC", "Microsoft YaHei", "PingFang SC", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif' });
         // keys belong to the field, not to the app's shortcuts
         el.addEventListener('keydown', e => {
             e.stopPropagation();

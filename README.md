@@ -134,7 +134,7 @@ src/
   history.cpp    local version history + GitHub REST client
   app_history.cpp Version History / Commit / GitHub Account screens
   json.*         tiny JSON parser/writer
-assets/fonts/    Lato + Source Code Pro (SIL OFL)
+assets/fonts/    Sarasa Gothic SC + JetBrains Maple Mono (SIL OFL)
 assets/icon/     logo (SVG) and app icon PNGs
 platform/        Info.plist (macOS/iOS), Linux .desktop + MIME, Android notes
 examples/        example .dez projects
@@ -152,7 +152,16 @@ See [CONTRIBUTING.md](CONTRIBUTING.md); contributors sign a short
 
 ## License
 
-Code: MIT, © 2026 Nesara Hippla (see [LICENSE](LICENSE)). Fonts: SIL Open Font License 1.1
-(see [assets/fonts/OFL.txt](assets/fonts/OFL.txt)). Video encoding uses
+Code: MIT, © 2026 Nesara Hippla (see [LICENSE](LICENSE)). Video encoding uses
 [minih264](https://github.com/lieff/minih264) and [minimp4](https://github.com/lieff/minimp4)
 (public domain, CC0; see [third_party](third_party)).
+
+### Fonts
+
+Both bundled fonts are under the SIL Open Font License 1.1 and ship next to the
+binary in `assets/fonts/` (their licence texts are there too):
+
+| Font | Used for | Author / source | Licence |
+|---|---|---|---|
+| **Sarasa Gothic SC** 1.0.43 | UI and canvas text — Latin plus the full CJK block, so Chinese notes and labels render without falling back | © 2015-2025 Renzhi Li (Belleve Invis), [be5invis/Sarasa-Gothic](https://github.com/be5invis/Sarasa-Gothic) | [OFL-SarasaGothic.txt](assets/fonts/OFL-SarasaGothic.txt) |
+| **JetBrains Maple Mono** 1.2304.79 | code editor, terminal, serial monitor | © 2025 Space Time, [SpaceTimee/Fusion-JetBrainsMapleMono](https://github.com/SpaceTimee/Fusion-JetBrainsMapleMono); built on [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) © 2020 The JetBrains Mono Project Authors and [Maple Mono](https://github.com/subframe7536/maple-font) © 2022 The Maple Mono Project Authors | [OFL-JetBrainsMapleMono.txt](assets/fonts/OFL-JetBrainsMapleMono.txt) |

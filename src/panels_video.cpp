@@ -78,7 +78,7 @@ void App::openVideoSheet() {
             if (gw > 36 * s) { gw = 36 * s; gh = gw * (float)p.h / (float)p.w; }
             g.strokeRect(Rect(r.x + 10 * s, r.center().y - gh / 2, gw, gh), 1.5f * s, sel ? th.accent : th.textDim);
             std::string nm = p.name;
-            while (nm.size() > 4 && g.textWidth(nm, 12.5f * s) > r.w - 60 * s) { nm.resize(nm.size() - 4); nm += "…"; }
+            nm = g.ellipsize(nm, 12.5f * s, r.w - 60 * s);
             g.text({r.x + 54 * s, r.y + 20 * s}, nm, 12.5f * s, th.text, 0);
             g.text({r.x + 54 * s, r.y + 39 * s}, p.hint, 11 * s, th.textDim, 0);
             x += w + 8 * s;

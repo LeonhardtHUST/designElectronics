@@ -2,24 +2,48 @@
 
 #include <cmath>
 
+// Byte length of the UTF-8 sequence starting at i.
+static size_t cpBytes(const std::string& s, size_t i) {
+    unsigned char c = (unsigned char)s[i];
+    size_t n = c < 0x80 ? 1 : (c >> 5) == 0x6 ? 2 : (c >> 4) == 0xE ? 3 : (c >> 3) == 0x1E ? 4 : 1;
+    return std::min(n, s.size() - i);
+}
+
 std::vector<std::string> wrapText(Gfx& g, const std::string& t, float px, float width) {
     std::vector<std::string> lines;
     std::string para;
     auto flushPara = [&](const std::string& p) {
-        std::string line, word;
-        size_t i = 0;
-        auto pushWord = [&]() {
-            if (word.empty()) return;
-            std::string cand = line.empty() ? word : line + " " + word;
-            if (!line.empty() && g.textWidth(cand, px) > width) { lines.push_back(line); line = word; }
-            else line = cand;
-            word.clear();
+        std::string line;
+        // Adds one space-free token. Words are kept whole when they fit; anything longer than
+        // the line (a URL, or a run of Chinese, which has no spaces to break at) is broken
+        // between characters.
+        auto addToken = [&](const std::string& tok, bool spaceBefore) {
+            if (tok.empty()) return;
+            if (!line.empty()) {
+                std::string sep = spaceBefore ? " " : "";
+                if (g.textWidth(line + sep + tok, px) <= width) { line += sep + tok; return; }
+                lines.push_back(line);
+                line.clear();
+            }
+            for (size_t i = 0; i < tok.size();) {
+                size_t n = cpBytes(tok, i);
+                std::string piece = tok.substr(i, n);
+                if (!line.empty() && g.textWidth(line + piece, px) > width) { lines.push_back(line); line.clear(); }
+                line += piece;
+                i += n;
+            }
         };
-        for (; i < p.size(); i++) {
-            if (p[i] == ' ') pushWord();
-            else word += p[i];
+        std::string word;
+        bool pendingSpace = false;
+        for (size_t i = 0; i < p.size(); i++) {
+            if (p[i] == ' ') {
+                if (!word.empty()) { addToken(word, pendingSpace); word.clear(); pendingSpace = true; }
+                else pendingSpace = pendingSpace || !line.empty();
+            } else {
+                word += p[i];
+            }
         }
-        pushWord();
+        addToken(word, pendingSpace);
         lines.push_back(line);
     };
     for (char c : t) {

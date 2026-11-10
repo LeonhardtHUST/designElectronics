@@ -236,7 +236,7 @@ void App::drawTopBar() {
     if (!compact) {
         std::string t = doc.title + (dirty() ? " •" : "");
         float maxW = 210 * s;
-        while (t.size() > 4 && g.textWidth(t, 13.5f * s) > maxW) t = t.substr(0, t.size() - 4) + "…";
+        t = g.ellipsize(t, 13.5f * s, maxW);
         g.text({undoR.x - 10 * s, r.center().y}, t, 13.5f * s, ui.th.textDim, 2);
     }
 }
@@ -584,6 +584,17 @@ void App::drawInspector(Rect r) {
                 if (Note* nn = doc.note(nid)) nn->text = t;
                 changed();
             }
+            y += rowH + 6 * s;
+            // text size: world units, so it grows with the drawing like the note box does
+            auto bump = [&](float d) {
+                checkpoint();
+                if (Note* nn = doc.note(nid)) nn->textSize = std::clamp(nn->textSize + d, 32.f, 240.f);
+                changed();
+            };
+            float bw = 46 * s;
+            if (ui.button("notefs-", Rect(x, y, bw, rowH), "A-", BTN_NORMAL, false, n->textSize > 33)) bump(-8);
+            if (ui.button("notefs+", Rect(x + w - bw, y, bw, rowH), "A+", BTN_NORMAL, false, n->textSize < 239)) bump(8);
+            g.text({x + w / 2, y + rowH / 2}, std::to_string((int)std::lround(n->textSize)), 13 * s, ui.th.textDim, 1);
             y += rowH + 6 * s;
             y += ui.wrappedText(Rect(x, y, w, 0), "Tip: type \\n for a line break. Drag the bottom-right corner on the canvas to resize.", ui.th.textDim, 12 * s) + 6 * s;
             if (ui.button("delnote", Rect(x, y, w, rowH), "Delete Note", BTN_NORMAL)) deleteSelection();

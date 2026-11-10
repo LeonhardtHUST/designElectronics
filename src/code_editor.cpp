@@ -467,7 +467,7 @@ bool UI::codeEditor(const std::string& sid, Rect r, std::string& text, CodeEdito
         Rect er(r.x, body.b(), r.w, errH);
         g->fillRect(er, rgba(200, 40, 40));
         std::string msg = "Line " + std::to_string(errorLine) + ": " + errorMsg;
-        while (msg.size() > 4 && g->textWidth(msg, 12.5f * s) > er.w - 20 * s) { msg.resize(msg.size() - 4); msg += "…"; }
+        msg = g->ellipsize(msg, 12.5f * s, er.w - 20 * s);
         g->text({er.x + 10 * s, er.center().y}, msg, 12.5f * s, rgba(255, 255, 255), 0);
     }
     g->strokeRect(r, std::max(1.f, s), focused ? th.accent : th.border);

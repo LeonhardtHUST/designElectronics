@@ -224,6 +224,7 @@ Json Document::toJson(bool full) const {
         o.set("at", vec(n.pos));
         o.set("size", vec(n.size));
         o.set("text", n.text);
+        if (std::fabs(n.textSize - kNoteTextSize) > 0.01f) o.set("textSize", (double)n.textSize);
         narr.push(o);
     }
     j.set("notes_", narr);
@@ -348,6 +349,7 @@ bool Document::fromJson(const Json& j, std::string* err) {
         n.pos = vecOf(o["at"]);
         n.size = o.has("size") ? vecOf(o["size"]) : Vec2(1500, 800);
         n.text = o["text"].str();
+        n.textSize = o.has("textSize") ? std::clamp(o["textSize"].f(kNoteTextSize), 24.f, 400.f) : kNoteTextSize;
         maxId = std::max(maxId, n.id);
         d.notes.push_back(n);
     }

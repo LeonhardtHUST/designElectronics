@@ -192,10 +192,7 @@ void App::openHistory() {
             btn("-restore", "Restore", restore, true);
             btn("-link", "View", link, false);
             float tw = bx - r.x - 14 * s;
-            auto clip = [&](std::string t, float px) {
-                while (t.size() > 3 && g.textWidth(t, px) > tw) { t.resize(t.size() - 4); t += "…"; }
-                return t;
-            };
+            auto clip = [&](std::string t, float px) { return g.ellipsize(t, px, tw); };
             g.text({r.x + 12 * s, r.y + 20 * s}, clip(l1, 14 * s), 14 * s, th.text, 0);
             g.text({r.x + 12 * s, r.y + 41 * s}, clip(l2, 12.5f * s), 12.5f * s, th.textDim, 0);
         };

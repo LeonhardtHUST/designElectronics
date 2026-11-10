@@ -416,7 +416,7 @@ static void svgPrim(std::string& o, const Prim& p, const Xform& xf) {
             int al = p.align;
             if (xf.flip) al = 2 - al;
             const char* anchor = al == 0 ? "start" : al == 1 ? "middle" : "end";
-            snprintf(b, sizeof b, "<text x=\"%.1f\" y=\"%.1f\" font-family=\"Lato, Helvetica, Arial, sans-serif\" font-size=\"%.1f\" text-anchor=\"%s\" dominant-baseline=\"central\" fill=\"%s\">",
+            snprintf(b, sizeof b, "<text x=\"%.1f\" y=\"%.1f\" font-family=\"Sarasa Gothic SC, Noto Sans SC, Microsoft YaHei, PingFang SC, Helvetica, Arial, sans-serif\" font-size=\"%.1f\" text-anchor=\"%s\" dominant-baseline=\"central\" fill=\"%s\">",
                      a.x, a.y, p.size, anchor, svgColor(p.fill).c_str());
             o += b;
             o += esc(p.text) + "</text>\n";
@@ -497,7 +497,7 @@ std::string exportSvg(const Document& doc, const Connectivity& conn, int view) {
                 Rect r = p.worldBounds(SCH);
                 std::string lbl = p.label;
                 if (!p.def->valueProp.empty()) lbl += "  " + p.prop(p.def->valueProp);
-                snprintf(b, sizeof b, "<text x=\"%.1f\" y=\"%.1f\" font-family=\"Lato, sans-serif\" font-size=\"55\" fill=\"#303030\">", r.x, r.y - 40);
+                snprintf(b, sizeof b, "<text x=\"%.1f\" y=\"%.1f\" font-family=\"Sarasa Gothic SC, Noto Sans SC, Microsoft YaHei, PingFang SC, sans-serif\" font-size=\"55\" fill=\"#303030\">", r.x, r.y - 40);
                 o += b;
                 o += esc(lbl) + "</text>\n";
             }
@@ -509,7 +509,7 @@ std::string exportSvg(const Document& doc, const Connectivity& conn, int view) {
         if (n.view != view) continue;
         snprintf(b, sizeof b, "<rect x=\"%.1f\" y=\"%.1f\" width=\"%.1f\" height=\"%.1f\" fill=\"#fff6b0\" stroke=\"#d8c860\" stroke-width=\"6\"/>\n", n.pos.x, n.pos.y, n.size.x, n.size.y);
         o += b;
-        snprintf(b, sizeof b, "<text x=\"%.1f\" y=\"%.1f\" font-family=\"Lato, sans-serif\" font-size=\"70\" fill=\"#333\">", n.pos.x + 40, n.pos.y + 100);
+        snprintf(b, sizeof b, "<text x=\"%.1f\" y=\"%.1f\" font-family=\"Sarasa Gothic SC, Noto Sans SC, Microsoft YaHei, PingFang SC, sans-serif\" font-size=\"%.1f\" fill=\"#333\">", n.pos.x + 40, n.pos.y + 40 + n.textSize * 0.86, n.textSize);
         o += b;
         o += esc(n.text) + "</text>\n";
     }

@@ -846,7 +846,7 @@ void App::drawCanvas(int v, const Camera& c, Rect vp, bool exporting) {
         g.fillRect(Rect(r.x + 3 * s, r.y + 4 * s, r.w, r.h), rgba(0, 0, 0, 30));
         g.fillRect(r, rgba(255, 246, 176));
         g.strokeRect(r, std::max(1.f, s), rgba(214, 196, 90));
-        float px = 70 * z;
+        float px = n.textSize * z;
         if (px >= 5) {
             auto lines = wrapText(g, n.text, px, r.w - 80 * z);
             for (size_t i = 0; i < lines.size(); i++) {

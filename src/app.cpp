@@ -600,7 +600,11 @@ void App::showAbout() {
                "",
                "Projects are single .dez files (plain JSON) that embed every part they use, so they open offline in any copy of designElectronics. No account, no server.",
                "",
-               "Built with SDL3. Fonts: Lato and Source Code Pro (SIL Open Font License)."},
+               "Built with SDL3.",
+               "",
+               "Fonts: Sarasa Gothic SC © 2015-2025 Renzhi Li (be5invis), and JetBrains Maple Mono © 2025 Space Time, built on JetBrains Mono and Maple Mono.",
+               "",
+               "Both fonts are under the SIL Open Font License 1.1; the licence texts ship in assets/fonts/."},
               {});
 }
 

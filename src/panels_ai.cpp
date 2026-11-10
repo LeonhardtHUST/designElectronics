@@ -166,7 +166,7 @@ void App::drawAIPanel(Rect r) {
             if (ui.button(std::string("ai-idea-") + idea, b, "", BTN_FLAT, false, ready && !running)) startAgent(idea);
             g.fillRoundRect(b, 6 * s, hot ? withAlpha(th.accent, 30) : th.panel2);
             std::string t = idea;
-            while (t.size() > 4 && g.textWidth(t, 12.5f * s) > b.w - 20 * s) { t.resize(t.size() - 4); t += "…"; }
+            t = g.ellipsize(t, 12.5f * s, b.w - 20 * s);
             g.text({b.x + 10 * s, b.center().y}, t, 12.5f * s, ready ? th.text : th.textDim, 0);
             sy += 36 * s;
         }
@@ -195,7 +195,7 @@ void App::drawAIPanel(Rect r) {
                     case ChatMsg::R_TOOL: {
                         ui.drawIcon("bolt", Rect(inner.x + 2 * s, yy + 3 * s, 14 * s, 14 * s), th.accent);
                         std::string t = m.text;
-                        while (t.size() > 4 && g.textWidth(t, 12 * s) > inner.w - 24 * s) { t.resize(t.size() - 4); t += "…"; }
+                        t = g.ellipsize(t, 12 * s, inner.w - 24 * s);
                         g.text({inner.x + 22 * s, yy + 10 * s}, t, 12 * s, th.textDim, 0);
                         break;
                     }

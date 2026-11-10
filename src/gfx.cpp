@@ -2,7 +2,9 @@
 
 #include <cmath>
 
-static const char* kFontFiles[2] = {"Lato-Regular.ttf", "SourceCodePro-Regular.ttf"};
+// UI text: Sarasa Gothic SC (Latin + full CJK in one face, so Chinese/Japanese text
+// never falls back to tofu). Code/terminals: JetBrains Maple Mono.
+static const char* kFontFiles[2] = {"SarasaGothicSC-Regular.ttf", "JetBrainsMapleMono-Regular.ttf"};
 
 static bool loadFile(const std::string& path, std::vector<unsigned char>& out) {
     size_t size = 0;
@@ -34,7 +36,7 @@ bool Gfx::init(SDL_Renderer* r) {
         for (auto& c : candidates) if (loadFile(c, fontData_[f])) break;
         if (fontData_[f].empty()) SDL_Log("Font %s not found", kFontFiles[f]);
     }
-    // Fallbacks for symbols (Ω, µ, arrows, …) the bundled Latin fonts lack.
+    // Last-resort fallbacks for symbols the bundled faces lack (emoji, rare pictographs).
     const char* sys[] = {
         "/System/Library/Fonts/Supplemental/Arial Unicode.ttf", "/System/Library/Fonts/Helvetica.ttc",
         "/System/Library/Fonts/Apple Symbols.ttf", "/System/Library/Fonts/Menlo.ttc",
@@ -127,6 +129,28 @@ float Gfx::textWidth(const std::string& s, float px, FontFace face) {
     int w = 0, h = 0;
     TTF_GetStringSize(f, s.c_str(), s.size(), &w, &h);
     return (float)w;
+}
+
+static size_t cpLen(const std::string& s, size_t i) {  // UTF-8 sequence length at byte i
+    unsigned char c = (unsigned char)s[i];
+    size_t n = c < 0x80 ? 1 : (c >> 5) == 0x6 ? 2 : (c >> 4) == 0xE ? 3 : (c >> 3) == 0x1E ? 4 : 1;
+    return std::min(n, s.size() - i);
+}
+
+std::string Gfx::ellipsize(const std::string& s, float px, float maxW, FontFace face) {
+    if (s.empty() || textWidth(s, px, face) <= maxW) return s;
+    static const char* kEll = "\xE2\x80\xA6";  // …
+    std::vector<size_t> start;                 // byte offset of every codepoint
+    for (size_t i = 0; i < s.size(); i += cpLen(s, i)) start.push_back(i);
+    size_t lo = 0, hi = start.size();          // binary search the number of codepoints that fit
+    while (lo < hi) {
+        size_t mid = (lo + hi + 1) / 2;
+        std::string cand = s.substr(0, mid < start.size() ? start[mid] : s.size());
+        cand += kEll;
+        if (textWidth(cand, px, face) <= maxW) lo = mid;
+        else hi = mid - 1;
+    }
+    return s.substr(0, lo < start.size() ? start[lo] : s.size()) + kEll;
 }
 
 float Gfx::text(Vec2 pos, const std::string& s, float px, uint32_t col, int align, FontFace face, float angleDeg) {

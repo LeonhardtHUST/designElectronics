@@ -270,8 +270,7 @@ void App::openUploadSheet(int partId) {
         size_t fit = (size_t)std::max(1.f, (logR.h - 12 * s) / lh);
         size_t first = lines.size() > fit ? lines.size() - fit : 0;
         for (size_t i = first; i < lines.size(); i++) {
-            std::string l = lines[i];
-            while (l.size() > 4 && g.textWidth(l, 11.5f * s, FONT_MONO) > logR.w - 20 * s) l.resize(l.size() - 4);
+            std::string l = g.ellipsize(lines[i], 11.5f * s, logR.w - 20 * s, FONT_MONO);
             g.text({logR.x + 10 * s, logR.y + 6 * s + (float)(i - first) * lh + lh / 2}, l, 11.5f * s,
                    l.rfind("$ ", 0) == 0 ? rgba(130, 170, 255) : rgba(200, 210, 225), 0, FONT_MONO);
         }

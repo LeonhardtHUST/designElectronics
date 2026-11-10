@@ -110,7 +110,7 @@ void App::drawCodePanel(Rect r) {
     if (hbtn("code-run", simOn ? "■ Stop" : "▶ Run", simOn ? BTN_NORMAL : BTN_PRIMARY, simOn ? "Stop the simulation" : "Run the program in the simulator"))
         toggleSim();
     float titleMax = rx - hdr.x - 8 * s;
-    while (title.size() > 4 && g.textWidth(title, 15 * s) > titleMax) { title.resize(title.size() - 4); title += "…"; }
+    title = g.ellipsize(title, 15 * s, titleMax);
     g.text({hdr.x + 2 * s, hdr.center().y}, title, 15 * s, th.text, 0);
 
     // ---- status: live syntax check while editing, run status while simulating ----

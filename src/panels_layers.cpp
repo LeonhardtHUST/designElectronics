@@ -261,10 +261,7 @@ void App::drawLayers(Rect r) {
         std::string l1 = p->label;
         std::string l2 = p->def->title;
         if (!p->def->valueProp.empty() && p->def->valueProp != "pins") l2 = p->prop(p->def->valueProp) + " · " + l2;
-        auto clip = [&](std::string t, float px) {
-            while (t.size() > 3 && g.textWidth(t, px) > tw) { t.resize(t.size() - 4); t += "…"; }
-            return t;
-        };
+        auto clip = [&](std::string t, float px) { return g.ellipsize(t, px, tw); };
         g.text({tx, rr.y + 13 * s}, clip(l1, 14 * s), 14 * s, hidden ? th.textDim : th.text, 0);
         g.text({tx, rr.y + 29 * s}, clip(l2, 11.5f * s), 11.5f * s, th.textDim, 0);
     }

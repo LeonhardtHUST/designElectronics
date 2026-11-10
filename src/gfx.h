@@ -42,6 +42,9 @@ public:
     // text: pos.y is the vertical centre; align 0 left, 1 centre, 2 right
     float text(Vec2 pos, const std::string& s, float px, uint32_t col, int align = 0, FontFace face = FONT_UI, float angleDeg = 0);
     float textWidth(const std::string& s, float px, FontFace face = FONT_UI);
+    // Shortens s to fit maxW and appends "…". Cuts on UTF-8 boundaries, so CJK text
+    // never ends in half a character.
+    std::string ellipsize(const std::string& s, float px, float maxW, FontFace face = FONT_UI);
     bool hasFonts() const { return !fontData_[0].empty(); }
 
 private:

@@ -111,9 +111,10 @@ endif()
 
 # Copy fonts next to the binary (desktop) / into the bundle (macOS, iOS).
 set(DE_FONTS
-  ${CMAKE_SOURCE_DIR}/assets/fonts/Lato-Regular.ttf
-  ${CMAKE_SOURCE_DIR}/assets/fonts/SourceCodePro-Regular.ttf
-  ${CMAKE_SOURCE_DIR}/assets/fonts/OFL.txt)
+  ${CMAKE_SOURCE_DIR}/assets/fonts/SarasaGothicSC-Regular.ttf
+  ${CMAKE_SOURCE_DIR}/assets/fonts/JetBrainsMapleMono-Regular.ttf
+  ${CMAKE_SOURCE_DIR}/assets/fonts/OFL-SarasaGothic.txt
+  ${CMAKE_SOURCE_DIR}/assets/fonts/OFL-JetBrainsMapleMono.txt)
 
 if(APPLE)
   target_sources(${DE_TARGET} PRIVATE ${DE_FONTS})

@@ -57,12 +57,16 @@ struct Wire {
     bool tidy = false;      // laid out by the tidy router: re-tidied when its parts move
 };
 
+// Default note text size in world units (the note is drawn at textSize * zoom).
+constexpr float kNoteTextSize = 108;
+
 struct Note {
     int id = 0;
     int view = BB;
     Vec2 pos;
     Vec2 size{1500, 800};
     std::string text;
+    float textSize = kNoteTextSize;
 };
 
 struct DesignRules {
