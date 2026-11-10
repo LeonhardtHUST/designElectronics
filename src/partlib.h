@@ -76,6 +76,9 @@ struct PropDef {
 
 struct PartDef {
     std::string type, title, category, description;
+    std::string datasheet;   // manufacturer datasheet URL
+    std::string tags;        // extra search words: "nand open-drain quad"
+    std::string silkscreen;  // text printed on the package body (defaults to the part number)
     std::string labelPrefix = "U";
     std::string valueProp;   // property shown next to the label in schematic/PCB
     std::string netProp;     // parts sharing this property's value are connected (GND, net labels)
@@ -108,6 +111,8 @@ struct LibEntry {
 const std::vector<LibEntry>& partLibrary();
 const std::vector<std::string>& partCategories();
 bool isKnownType(const std::string& type);
+// Custom models that are currently registered (imported or installed).
+std::vector<LibEntry> customPartEntries();
 
 // Returns the (cached) definition for a type with the given instance properties
 // merged over its defaults. Returns nullptr if the type is unknown.
@@ -116,6 +121,7 @@ Props mergedProps(const std::string& type, const Props& props);
 
 // Custom/embedded parts (registered from project files or imported .dezpart files).
 void registerCustomPart(const PartDef& def);
+void unregisterCustomPart(const std::string& type);
 void clearCustomParts();
 bool isCustomType(const std::string& type);
 

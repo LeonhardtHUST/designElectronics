@@ -82,15 +82,18 @@ const std::set<std::string>& knownCategories() {
     return s;
 }
 
-std::vector<DataPart> parseAll() {
+std::vector<DataPart> parseAll(const std::string& text, std::vector<std::string>* errs) {
     std::vector<DataPart> out;
-    const char* p = (const char*)de_partdata;
-    const char* end = p + de_partdata_size;
+    const char* p = text.data();
+    const char* end = p + text.size();
     std::string file;
     int lineNo = 0;
     DataPart* cur = nullptr;
     std::string* last = nullptr;  // value a continuation line appends to
-    auto err = [&](const std::string& m) { errors().push_back(file + ":" + std::to_string(lineNo) + ": " + m); };
+    auto err = [&](const std::string& m) {
+        std::string s = file + ":" + std::to_string(lineNo) + ": " + m;
+        if (errs) errs->push_back(s); else errors().push_back(s);
+    };
     while (p < end) {
         const char* nl = (const char*)std::memchr(p, '\n', (size_t)(end - p));
         if (!nl) nl = end;
@@ -146,6 +149,11 @@ std::vector<DataPart> parseAll() {
     }
     for (auto& dp : out) dp.aliases = splitOn(dp.aliasText, ',');
     return out;
+}
+
+// The embedded parts/*.txt data.
+std::vector<DataPart> parseAll() {
+    return parseAll(std::string((const char*)de_partdata, (size_t)de_partdata_size), nullptr);
 }
 
 // ---- pins -----------------------------------------------------------------------
@@ -453,7 +461,8 @@ void build(PartDef& d, const DataPart& dp, const Props& p) {
     d.valueProp = "part";
     d.title = part + (dp.title.empty() ? "" : " " + dp.title);
     d.description = dp.desc;
-    if (!dp.datasheet.empty()) d.description += (d.description.empty() ? "" : " ") + std::string("Datasheet: ") + dp.datasheet;
+    d.datasheet = dp.datasheet;
+    d.silkscreen = label;
     d.sim = dp.sim;
     d.simParams = dp.simParams;
     if (d.sim.empty()) d.description += " Pinout only — wire it, route it and export it; the simulator treats it as unconnected.";
@@ -504,6 +513,39 @@ void addDataGenerators(std::map<std::string, Gen>& g) {
 }
 
 const std::vector<LibEntry>& dataEntries() { return loaded().entries; }
+
+// Build a part from one datasheet block in the parts/*.txt format, so a model
+// can be imported without drawing it by hand. Only the first block is used.
+bool buildPartFromBlock(const std::string& text, PartDef& out, std::string* err) {
+    std::vector<std::string> errs;
+    std::vector<DataPart> parts = parseAll(text, &errs);
+    if (!errs.empty()) {
+        if (err) *err = errs.front();
+        return false;
+    }
+    for (auto& dp : parts) {
+        if (dp.builtin) continue;
+        if (dp.packages.empty()) {
+            if (err) *err = "add a \"package\" line, e.g. package = DIP-14";
+            return false;
+        }
+        Props defs = dp.props;
+        defs["part"] = dp.part;
+        defs["package"] = dp.packages[0];
+        out = PartDef();
+        out.type = dp.type;
+        out.category = dp.category.empty() ? "Custom" : dp.category;
+        out.defaults = defs;
+        build(out, dp, defs);
+        if (out.pins.empty()) {
+            if (err) *err = "the pin list does not fit package \"" + dp.packages[0] + "\"";
+            return false;
+        }
+        return true;
+    }
+    if (err) *err = "no [PART] block found";
+    return false;
+}
 
 bool isDataType(const std::string& type) {
     static std::set<std::string> t = [] { std::set<std::string> s; for (auto& dp : loaded().parts) s.insert(dp.type); return s; }();

@@ -56,6 +56,7 @@ set(DE_SOURCES
   src/agent.cpp
   src/panels_ai.cpp
   src/partdata.cpp
+  src/partmodels.cpp
 )
 
 # Parts library data (parts/*.txt), compiled in.

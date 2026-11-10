@@ -22,6 +22,7 @@
 #include "history.h"
 #include "logo.h"
 #include "mcp.h"
+#include "partmodels.h"
 #include "video.h"
 
 namespace {
@@ -119,6 +120,74 @@ void partDataTests(int& failures) {
         std::string err;
         check(d2.deserialize(t.d.serialize(true), &err) && d2.part(u)->def->pins[0].smd(), "SMD parts save and load", failures);
     }
+}
+
+// Part models: the .dezpart document, the datasheet-block path and the checks.
+void modelTests(int& failures) {
+    printf("Part models\n");
+    const char* block =
+        "[TESTMODEL]\n"
+        "title     = Test Logic\n"
+        "category  = Logic\n"
+        "desc      = Imported from a datasheet block.\n"
+        "datasheet = https://example.com/test.pdf\n"
+        "package   = DIP-8\n"
+        "pins      = A B C D E F G H\n"
+        "sim       = logic\n";
+    {   // a pasted datasheet block becomes a complete part
+        Json doc = Json::object();
+        doc.set("format", "designElectronics-part");
+        doc.set("version", 2);
+        doc.set("block", block);
+        PartModel m;
+        std::string err;
+        bool ok = partModelFromJson(doc, m, &err);
+        printf("  block import: %s (%d pins, sim %s)\n", ok ? "ok" : err.c_str(), (int)m.def.pins.size(), m.def.sim.c_str());
+        check(ok && m.def.pins.size() == 8 && m.def.type == "testmodel", "a datasheet block becomes a part model", failures);
+        check(m.def.datasheet == "https://example.com/test.pdf", "the block's datasheet becomes a field", failures);
+    }
+    {   // metadata and geometry survive save → load
+        Json doc = Json::object();
+        doc.set("block", block);
+        PartModel src;
+        std::string err;
+        partModelFromJson(doc, src, &err);
+        src.meta.tags = {"nand", "demo"};
+        src.meta.author = "selftest";
+        PartModel back;
+        bool ok = partModelFromJson(partModelToJson(src), back, &err);
+        printf("  round trip: %s (%d tags)\n", ok ? "ok" : err.c_str(), (int)back.meta.tags.size());
+        check(ok && back.def.type == src.def.type && back.def.pins.size() == src.def.pins.size() &&
+                  back.meta.tags.size() == 2 && back.def.datasheet == src.def.datasheet && back.meta.author == "selftest",
+              "a model survives a save/load round trip", failures);
+    }
+    {   // the checks reject what would break the editor
+        PartModel bad;
+        bad.def.type = "Bad Type!";
+        bad.def.title = "Bad";
+        PinDef p;
+        p.id = "1";
+        bad.def.pins.push_back(p);
+        bad.def.pins.push_back(p);       // duplicate id
+        bad.def.buses.push_back({0, 9});  // bus points at a pin that doesn't exist
+        std::vector<std::string> errs, warns;
+        bool ok = checkPartModel(bad, errs, warns);
+        printf("  checks: %d problems reported\n", (int)errs.size());
+        check(!ok && errs.size() >= 3, "model checks catch bad ids, duplicate pins and missing pins", failures);
+    }
+    {   // the v1 document (a bare part definition) still imports
+        PartDef d;
+        d.type = "legacy";
+        d.title = "Legacy Part";
+        PinDef p;
+        p.id = "1";
+        d.pins.push_back(p);
+        PartModel m;
+        std::string err;
+        bool ok = partModelFromJson(partDefToJson(d), m, &err);
+        check(ok && m.meta.id == "legacy" && m.meta.source == "json", "older bare definitions still import", failures);
+    }
+    check(partModelSlug("74HC03 Quad NAND") == "74hc03_quad_nand", "model ids are slugged from the name", failures);
 }
 
 int simTests(int& failures) {
@@ -832,6 +901,7 @@ int selftest() {
         check(exportGerberZip(d, c, zip, &msg), "Gerber zip export", failures);
     }
     partDataTests(failures);
+    modelTests(failures);
     simTests(failures);
     historyTests(failures);
     layerTests(failures);

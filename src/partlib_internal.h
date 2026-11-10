@@ -81,5 +81,9 @@ void addDataGenerators(std::map<std::string, Gen>& g);
 const std::vector<LibEntry>& dataEntries();
 bool isDataType(const std::string& type);
 std::vector<std::string> checkDataParts();
+// Build one part from a pasted datasheet block (the parts/*.txt format).
+bool buildPartFromBlock(const std::string& text, PartDef& out, std::string* err);
+// "duplicate pin id X" / "pads A and B overlap" / "" when the layout is sane.
+std::string padProblem(const PartDef& d);
 
 }  // namespace plib

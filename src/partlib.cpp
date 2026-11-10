@@ -1555,6 +1555,14 @@ bool isCustomType(const std::string& type) {
     return g_custom.count(type) > 0;
 }
 
+std::vector<LibEntry> customPartEntries() {
+    std::vector<LibEntry> out;
+    std::lock_guard<std::mutex> lk(g_mutex);
+    for (auto& kv : g_custom) out.push_back({kv.first, kv.second.title, kv.second.category, {}});
+    std::sort(out.begin(), out.end(), [](const LibEntry& a, const LibEntry& b) { return a.title < b.title; });
+    return out;
+}
+
 Props mergedProps(const std::string& type, const Props& props) {
     Props out;
     auto it = generators().find(type);
@@ -1610,6 +1618,16 @@ void registerCustomPart(const PartDef& def) {
     }
 }
 
+void unregisterCustomPart(const std::string& type) {
+    std::lock_guard<std::mutex> lk(g_mutex);
+    g_custom.erase(type);
+    for (auto it = g_cache.begin(); it != g_cache.end();) {
+        if (it->first.compare(0, type.size(), type) == 0 && (it->first.size() == type.size() || it->first[type.size()] == '\x1f'))
+            it = g_cache.erase(it);
+        else ++it;
+    }
+}
+
 void clearCustomParts() {
     std::lock_guard<std::mutex> lk(g_mutex);
     for (auto& kv : g_custom) {
@@ -1646,6 +1664,9 @@ Json partDefToJson(const PartDef& d) {
     j.set("title", d.title);
     j.set("category", d.category);
     j.set("description", d.description);
+    if (!d.datasheet.empty()) j.set("datasheet", d.datasheet);
+    if (!d.tags.empty()) j.set("tags", d.tags);
+    if (!d.silkscreen.empty()) j.set("silkscreen", d.silkscreen);
     j.set("labelPrefix", d.labelPrefix);
     if (!d.valueProp.empty()) j.set("valueProp", d.valueProp);
     if (!d.netProp.empty()) j.set("netProp", d.netProp);
@@ -1726,6 +1747,16 @@ bool partDefFromJson(const Json& j, PartDef& d, std::string* err) {
     d.title = j["title"].str(d.type);
     d.category = j["category"].str("Custom");
     d.description = j["description"].str();
+    d.datasheet = j["datasheet"].str();
+    if (j["tags"].isArray()) {
+        for (auto& t : j["tags"].items()) {
+            if (!d.tags.empty()) d.tags += ' ';
+            d.tags += t.str();
+        }
+    } else {
+        d.tags = j["tags"].str();
+    }
+    d.silkscreen = j["silkscreen"].str();
     d.labelPrefix = j["labelPrefix"].str("U");
     d.valueProp = j["valueProp"].str();
     d.netProp = j["netProp"].str();
