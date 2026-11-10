@@ -165,5 +165,16 @@ binary in `assets/fonts/` (their licence texts are there too):
 
 | Font | Used for | Author / source | Licence |
 |---|---|---|---|
-| **Sarasa Gothic SC** 1.0.43 | UI and canvas text — Latin plus the full CJK block, so Chinese notes and labels render without falling back | © 2015-2025 Renzhi Li (Belleve Invis), [be5invis/Sarasa-Gothic](https://github.com/be5invis/Sarasa-Gothic) | [OFL-SarasaGothic.txt](assets/fonts/OFL-SarasaGothic.txt) |
-| **JetBrains Maple Mono** 1.2304.79 | code editor, terminal, serial monitor | © 2025 Space Time, [SpaceTimee/Fusion-JetBrainsMapleMono](https://github.com/SpaceTimee/Fusion-JetBrainsMapleMono); built on [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) © 2020 The JetBrains Mono Project Authors and [Maple Mono](https://github.com/subframe7536/maple-font) © 2022 The Maple Mono Project Authors | [OFL-JetBrainsMapleMono.txt](assets/fonts/OFL-JetBrainsMapleMono.txt) |
+| **Sarasa Gothic SC** 1.0.43 (subset) | UI and canvas text — Latin plus ~6 700 everyday hanzi, so Chinese notes and labels render without falling back | © 2015-2025 Renzhi Li (Belleve Invis), [be5invis/Sarasa-Gothic](https://github.com/be5invis/Sarasa-Gothic) | [OFL-SarasaGothic.txt](assets/fonts/OFL-SarasaGothic.txt) |
+| **JetBrains Maple Mono** 1.2304.79 (subset) | code editor, terminal, serial monitor | © 2025 Space Time, [SpaceTimee/Fusion-JetBrainsMapleMono](https://github.com/SpaceTimee/Fusion-JetBrainsMapleMono); built on [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) © 2020 The JetBrains Mono Project Authors and [Maple Mono](https://github.com/subframe7536/maple-font) © 2022 The Maple Mono Project Authors | [OFL-JetBrainsMapleMono.txt](assets/fonts/OFL-JetBrainsMapleMono.txt) |
+
+The masters carry ~21 000 hanzi each and add 40 MB to every download; the
+binary only draws a few thousand. `tools/subset_fonts.py` rebuilds the shipped
+files with the characters the app can display (Latin, Greek, punctuation,
+arrows, box drawing, kana, and every character in `i18n/*.json` and the C++
+sources). Glyph outlines and hinting are untouched, so the text looks the same —
+a character outside the subset is drawn by the system font (Microsoft YaHei,
+PingFang, Noto CJK), which is why traditional Chinese or a rare name still
+renders on the desktop. The web build has no system fonts to fall back on; build
+it with `--set gbk` if your users need the wider repertoire.
+

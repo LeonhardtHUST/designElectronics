@@ -36,12 +36,20 @@ bool Gfx::init(SDL_Renderer* r) {
         for (auto& c : candidates) if (loadFile(c, fontData_[f])) break;
         if (fontData_[f].empty()) SDL_Log("Font %s not found", kFontFiles[f]);
     }
-    // Last-resort fallbacks for symbols the bundled faces lack (emoji, rare pictographs).
+    // Last-resort fallbacks: symbols the bundled faces lack (emoji, pictographs)
+    // and the CJK characters that were left out of the subsets — a name written
+    // with a rare hanzi still needs a glyph. Desktop systems always have one of
+    // these; the web build has no system fonts, so it lives with the subset.
     const char* sys[] = {
         "/System/Library/Fonts/Supplemental/Arial Unicode.ttf", "/System/Library/Fonts/Helvetica.ttc",
-        "/System/Library/Fonts/Apple Symbols.ttf", "/System/Library/Fonts/Menlo.ttc",
+        "/System/Library/Fonts/PingFang.ttc", "/System/Library/Fonts/Apple Symbols.ttf",
+        "/System/Library/Fonts/Menlo.ttc",
         "/system/fonts/Roboto-Regular.ttf", "/system/fonts/NotoSansSymbols-Regular-Subsetted.ttf",
+        "/system/fonts/NotoSansCJK-Regular.ttc", "/system/fonts/DroidSansFallback.ttf",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        "C:/Windows/Fonts/msyh.ttc", "C:/Windows/Fonts/msyh.ttf", "C:/Windows/Fonts/simsun.ttc",
         "C:/Windows/Fonts/segoeui.ttf", "C:/Windows/Fonts/seguisym.ttf"};
     for (const char* p : sys) {
         std::vector<unsigned char> d;
