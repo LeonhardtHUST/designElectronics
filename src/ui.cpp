@@ -11,50 +11,98 @@ static size_t cpBytes(const std::string& s, size_t i) {
     return std::min(n, s.size() - i);
 }
 
-std::vector<std::string> wrapText(Gfx& g, const std::string& t, float px, float width) {
-    std::vector<std::string> lines;
-    std::string para;
-    auto flushPara = [&](const std::string& p) {
-        std::string line;
-        // Adds one space-free token. Words are kept whole when they fit; anything longer than
-        // the line (a URL, or a run of Chinese, which has no spaces to break at) is broken
-        // between characters.
-        auto addToken = [&](const std::string& tok, bool spaceBefore) {
-            if (tok.empty()) return;
-            if (!line.empty()) {
-                std::string sep = spaceBefore ? " " : "";
-                if (g.textWidth(line + sep + tok, px) <= width) { line += sep + tok; return; }
-                lines.push_back(line);
-                line.clear();
-            }
-            for (size_t i = 0; i < tok.size();) {
-                size_t n = cpBytes(tok, i);
-                std::string piece = tok.substr(i, n);
-                if (!line.empty() && g.textWidth(line + piece, px) > width) { lines.push_back(line); line.clear(); }
-                line += piece;
-                i += n;
-            }
-        };
-        std::string word;
-        bool pendingSpace = false;
-        for (size_t i = 0; i < p.size(); i++) {
-            if (p[i] == ' ') {
-                if (!word.empty()) { addToken(word, pendingSpace); word.clear(); pendingSpace = true; }
-                else pendingSpace = pendingSpace || !line.empty();
-            } else {
-                word += p[i];
-            }
-        }
-        addToken(word, pendingSpace);
-        lines.push_back(line);
-    };
-    for (char c : t) {
-        if (c == '\n') { flushPara(para); para.clear(); }
-        else para += c;
+namespace {
+// Characters that carry a whole "word" of their own: CJK may break anywhere,
+// Latin must not break inside a word.
+bool isWide(unsigned cp) {
+    return (cp >= 0x2E80 && cp <= 0xA4CF) || (cp >= 0xAC00 && cp <= 0xD7AF) ||
+           (cp >= 0xF900 && cp <= 0xFAFF) || (cp >= 0xFE30 && cp <= 0xFE6F) ||
+           (cp >= 0xFF00 && cp <= 0xFF60) || (cp >= 0x20000 && cp <= 0x3FFFF);
+}
+// A line may not start with these (closing brackets, punctuation): keep them on
+// the previous line instead of letting one hang under the text.
+bool sticksToPrevious(unsigned cp) {
+    switch (cp) {
+        case 0x3001: case 0x3002: case 0x3009: case 0x300B: case 0x300D: case 0x300F: case 0x3011:
+        case 0xFF01: case 0xFF09: case 0xFF0C: case 0xFF1A: case 0xFF1B: case 0xFF1F: case 0xFF3D:
+        case 0xFF5D: case 0x2026: case 0x201D: case 0x2019: case 0xFF0E:
+            return true;
     }
-    flushPara(para);
+    return false;
+}
+// …and a line should not end with these (opening brackets).
+bool sticksToNext(unsigned cp) {
+    switch (cp) {
+        case 0x3008: case 0x300A: case 0x300C: case 0x300E: case 0x3010: case 0xFF08:
+        case 0xFF3B: case 0xFF5B: case 0x201C: case 0x2018:
+            return true;
+    }
+    return false;
+}
+}  // namespace
+
+std::vector<std::string> wrapText(Gfx& g, const std::string& t, float px, float width) {
+    // Words are the smallest unit that may move to the next line: a Latin run or
+    // a single CJK character. Closing punctuation is glued to the word before it,
+    // opening punctuation to the word after, so neither is left dangling.
+    struct Word {
+        std::string text;
+        bool space;  // this word was preceded by a space
+    };
+    std::vector<std::string> lines;
+    std::vector<Word> words;
+    std::string cur;
+    bool space = false;
+    bool glueNext = false;  // the current word started with an opening bracket
+
+    auto flushWord = [&]() {
+        if (!cur.empty()) { words.push_back({cur, space}); cur.clear(); space = false; glueNext = false; }
+    };
+    for (size_t i = 0; i < t.size();) {
+        size_t n = cpBytes(t, i);
+        unsigned char b0 = (unsigned char)t[i];
+        unsigned cp = n == 1 ? b0 : (unsigned)(b0 & (n == 2 ? 0x1F : n == 3 ? 0x0F : 0x07));
+        for (size_t k = 1; k < n; k++) cp = (cp << 6) | ((unsigned char)t[i + k] & 0x3F);
+        if (cp == '\n') { flushWord(); words.push_back({"\n", false}); i += n; continue; }
+        if (cp == ' ') { flushWord(); space = true; i += n; continue; }
+        std::string piece = t.substr(i, n);
+        if (sticksToPrevious(cp)) {
+            // Closing punctuation never starts a line: it belongs to whatever came
+            // before, which for CJK is already a finished word in the list.
+            if (!cur.empty()) cur += piece;
+            else if (!words.empty() && words.back().text != "\n") words.back().text += piece;
+            else cur += piece;
+        } else if (!cur.empty() && glueNext) cur += piece;  // opening bracket: glue to this word
+        else if (isWide(cp)) { flushWord(); glueNext = sticksToNext(cp); words.push_back({piece, space}); space = false; }
+        else { if (cur.empty()) glueNext = sticksToNext(cp); cur += piece; }  // Latin: extend the word
+        i += n;
+    }
+    flushWord();
+
+    std::string line;
+    auto pushLine = [&]() {
+        while (!line.empty() && line.back() == ' ') line.pop_back();
+        lines.push_back(line);
+        line.clear();
+    };
+    for (auto& w : words) {
+        if (w.text == "\n") { pushLine(); continue; }
+        std::string piece = (w.space && !line.empty()) ? " " + w.text : w.text;
+        if (g.textWidth(line + piece, px) <= width) { line += piece; continue; }
+        if (!line.empty()) { pushLine(); piece = w.text; }
+        // A single word wider than the line (a URL, a long number) breaks by character.
+        for (size_t i = 0; i < w.text.size();) {
+            size_t n = cpBytes(w.text, i);
+            std::string c = w.text.substr(i, n);
+            if (!line.empty() && g.textWidth(line + c, px) > width) pushLine();
+            line += c;
+            i += n;
+        }
+    }
+    pushLine();
     return lines;
 }
+
 
 void UI::begin() {
     tip_.clear();
