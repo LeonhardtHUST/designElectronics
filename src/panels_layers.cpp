@@ -371,6 +371,11 @@ void App::drawLayers(Rect r) {
             if (a->kind == AnnoKind::Text && !a->text.empty()) {
                 std::string first = a->text.substr(0, a->text.find('\n'));
                 name += "  " + first;
+            } else if (a->kind == AnnoKind::Image) {
+                // "Picture  PNG 640×480": what it is, so two pictures can be told apart.
+                const ImageBlob* blob = doc.image(a->image);
+                name += "  " + (blob ? imageFormatLabel(blob->mime) + " " + std::to_string(blob->w) + "×" + std::to_string(blob->h)
+                                     : tr("anno.image_missing"));
             }
             g.text({tx2, rr.center().y}, g.ellipsize(name, 14 * s, eye.x - tx2 - 6 * s), 14 * s, a->hidden ? th.textDim : th.text, 0);
             continue;

@@ -421,3 +421,17 @@ void Gfx::radialGlow(Vec2 c, float r, uint32_t col) {
         tri(c, c + Vec2(std::cos(a0), std::sin(a0)) * r, c + Vec2(std::cos(a1), std::sin(a1)) * r, col, t, t);
     }
 }
+
+void Gfx::image(SDL_Texture* tex, Rect dst, float angleDeg, uint32_t tint) {
+    if (!tex || !r_ || dst.w <= 0 || dst.h <= 0 || (tint & 0xFF) == 0) return;
+    flush();  // the texture draw is not part of the batching above it
+    SDL_SetTextureColorMod(tex, (Uint8)(tint >> 24), (Uint8)(tint >> 16), (Uint8)(tint >> 8));
+    SDL_SetTextureAlphaMod(tex, (Uint8)tint);
+    SDL_FRect d{std::round(dst.x), std::round(dst.y), dst.w, dst.h};
+    if (angleDeg == 0) {
+        SDL_RenderTexture(r_, tex, nullptr, &d);
+    } else {
+        SDL_FPoint center{d.w / 2, d.h / 2};  // rotate about the middle of the target box
+        SDL_RenderTextureRotated(r_, tex, nullptr, &d, angleDeg, &center, SDL_FLIP_NONE);
+    }
+}

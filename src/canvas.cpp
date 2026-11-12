@@ -1,5 +1,6 @@
 // Canvas: rendering of the breadboard / schematic / PCB views and all pointer
 // interaction (select, move, wire, bend, pan, pinch-zoom, rubber band).
+#include <algorithm>
 #include <cmath>
 
 #include "app.h"
@@ -115,7 +116,12 @@ float App::wireJoinTol(int v) const {
 // wins everywhere else.
 //
 // Priorities (small wins): 0 selection handle, 1 wire end, 2 wire bend, 3 wire
-// segment, 4 pin, 5 part body, 6 annotation or note, 7 ratsnest line.
+// segment, 4 pin, 5 part body, 6 annotation, 7 note, 10 ratsnest line.
+//
+// Boards and breadboards are drawn under the notes and the markup (see the drawing
+// code), so where an annotation or a note is hit, the holes and the body of a board
+// under it drop to 8 and 9: otherwise a text label placed on a breadboard could never
+// be clicked, the breadboard would always win.
 void App::collectHits(Vec2 s, std::vector<HitCand>& out) {
     out.clear();
     const Vec2 w = toWorld(s);
@@ -146,6 +152,19 @@ void App::collectHits(Vec2 s, std::vector<HitCand>& out) {
         for (auto& a : doc.annos) {
             if (a.view != view || a.hidden) continue;
             if (!selAnnos.count(a.id)) continue;  // grab the shape first, then its handles
+            // A picture has one extra handle: the rotation grip above its top edge.
+            if (a.kind == AnnoKind::Image) {
+                Vec2 rot = annoRotateHandleAt(a, kRotateHandlePx * ui.s / z);
+                float rtol = hitRadius(view, 0) * 1.2f;
+                if (dist(rot, w) <= rtol) {
+                    Hit h;
+                    h.kind = Hit::ANNO_HANDLE;
+                    h.anno = a.id;
+                    h.index = kAnnoRotateHandle;
+                    push(h, 0, dist(rot, w) * z);
+                    continue;
+                }
+            }
             int idx = -1;
             float tol = hitRadius(view, 0) * 1.2f;
             if (annoHitHandle(a, w, tol, &idx)) {
@@ -231,7 +250,8 @@ void App::collectHits(Vec2 s, std::vector<HitCand>& out) {
         push(h, 5, 0.f);
     }
 
-    // 6 — notes and annotations (markup under the parts, and under their clicks too)
+    // 6, 7 — annotations and notes (markup under the parts, and under their clicks
+    // too, but above the boards and breadboards they are drawn on)
     if (layerShown(view, LY_NOTES)) {
         for (int i = (int)doc.notes.size() - 1; i >= 0; i--) {
             const Note& n = doc.notes[(size_t)i];
@@ -240,26 +260,45 @@ void App::collectHits(Vec2 s, std::vector<HitCand>& out) {
             Hit h;
             h.kind = Hit::NOTE;
             h.note = n.id;
-            push(h, 6, 0.f);
+            push(h, 7, 0.f);  // under the markup, which is drawn over the notes
         }
     }
     if (layerShown(view, LY_ANNO)) {
         for (int i = (int)doc.annos.size() - 1; i >= 0; i--) {
             const Anno& a = doc.annos[(size_t)i];
             if (a.view != view || a.hidden) continue;
-            float tol = hitRadius(view, 0);
+            // Wide enough to grab a shape easily (see annoHitTolPx), but the priority
+            // below stays as it was: a wire end, a bend, a segment or a pin under the
+            // pointer still wins over the markup around it.
+            float tol = std::max(hitRadius(view, 0), annoHitTolPx(a, ui.s) / z);
             if (!annoHitTest(a, w, tol)) continue;
-            float d = 0;
-            if (a.kind == AnnoKind::Line) d = distPointSeg(w, a.a, a.b);
-            else if (a.kind == AnnoKind::Circle) d = std::fabs(dist(w, a.a) - dist(a.a, a.b));
+            // The same distance the hit test measured, so the nearest stroke wins. A
+            // box (text) has no stroke: it keeps distance 0, i.e. the drawn order.
+            bool stroke = a.kind == AnnoKind::Rect || a.kind == AnnoKind::Line || a.kind == AnnoKind::Circle;
+            float d = stroke ? annoStrokeDist(a, w) * z : 0.f;
             Hit h;
             h.kind = Hit::ANNO;
             h.anno = a.id;
-            push(h, 6, d * z);
+            push(h, 6, d);
         }
     }
 
-    // 7 — ratsnest lines
+    // Markup is drawn over boards and breadboards: where it is hit, their holes and
+    // bodies give way (8, 9). Everywhere else they keep 4 and 5, so wiring a bare
+    // breadboard works exactly as before.
+    bool markupHit = false;
+    for (auto& c : out)
+        if (c.h.kind == Hit::ANNO || c.h.kind == Hit::NOTE) markupHit = true;
+    if (markupHit) {
+        for (auto& c : out) {
+            if (c.h.kind != Hit::PIN && c.h.kind != Hit::PART) continue;
+            const PartInst* p = doc.part(c.h.part);
+            if (!p || !p->def || !(p->def->isBoard || p->def->isBreadboard)) continue;
+            c.prio = c.h.kind == Hit::PIN ? 8 : 9;
+        }
+    }
+
+    // 10 — ratsnest lines
     if (showRatsnest && layerShown(view, LY_RATSNEST)) {
         for (auto& r : conn.ratsnest(doc, view)) {
             float d = distPointSeg(w, r.a, r.b);
@@ -267,7 +306,7 @@ void App::collectHits(Vec2 s, std::vector<HitCand>& out) {
             Hit h;
             h.kind = Hit::RATSNEST;
             h.rat = r;
-            push(h, 7, d * z);
+            push(h, 10, d * z);
         }
     }
 }
@@ -508,6 +547,8 @@ void App::startDrag() {
             beginEdit();
             dragAnno = a->id;
             dragAnnoHandle = pressHit.kind == Hit::ANNO_HANDLE ? std::max(0, pressHit.index) : -1;
+            // Shift keeps a picture's proportions: freeze the ratio the drag started with.
+            dragAnnoAspect = a->kind == AnnoKind::Image && a->b.y > 0 ? a->b.x / a->b.y : 0.f;
             moveAnnoStart.clear();
             for (int id : selAnnos) if (const Anno* s = doc.anno(id)) moveAnnoStart[id] = {s->a, s->b};
             drag = DRAG_ANNO;
@@ -562,7 +603,11 @@ void App::finishPointer() {
             } else if (h.kind == Hit::ANNO || h.kind == Hit::ANNO_HANDLE) {
                 if (add) { if (!selAnnos.erase(h.anno)) selAnnos.insert(h.anno); }
                 else { selAnnos = {h.anno}; selParts.clear(); selWires.clear(); selNotes.clear(); }
-                if (in.doubleClick) drawerInspector = compact;
+                if (in.doubleClick) {
+                    const Anno* anno = doc.anno(h.anno);
+                    if (anno && anno->kind == AnnoKind::Text && tool == TOOL_SELECT) beginInlineAnnoEdit(h.anno);
+                    else drawerInspector = compact;
+                }
             } else if (h.kind == Hit::RATSNEST) {
                 checkpoint();
                 Wire wr;
@@ -642,13 +687,26 @@ void App::finishPointer() {
     wireTargetPart = wireTargetPin = -1;
 }
 
+// Point text has no fixed frame: its box follows the glyphs. Measuring it before input
+// handling keeps the hit box, the selection frame and the in-place editor on the text
+// that is actually drawn, whatever changed it last frame (typing, size, font, undo).
+void App::fitPointTexts(int v) {
+    for (auto& a : doc.annos)
+        if (a.view == v && a.kind == AnnoKind::Text && a.pointText) annoFitText(a, g);
+}
+
 void App::canvasInput() {
+    fitPointTexts(view);
     Vec2 m = in.mouse;
     float s = ui.s;
     bool drawerOpen = compact && (drawerParts || drawerInspector || drawerLayers || drawerAI);
     bool overCanvas = rCanvas.contains(m) && !ui.overBlocking(m) && !(drawerOpen && rRight.contains(m)) &&
                       !(simOn && simNotesRect.contains(m));  // the overlay's notes toggle
     Camera& c = cam[view];
+    if (inlineAnnoEdit >= 0 && inlineAnnoRect().contains(m)) {
+        hover = Hit();
+        return;
+    }
 
     // pinch / two-finger gestures
     if (in.pinching || in.pinchScale != 1.f) {
@@ -766,6 +824,19 @@ void App::canvasInput() {
         canvasOwnsPointer = true;
         pressWorld = toWorld(m);
         pressHit = hitTest(m);
+        // Usually handled on this press; finishPointer retains the same-frame release path for tests.
+        if (!readOnly && !spaceDown && tool == TOOL_SELECT && in.doubleClick && (pressHit.kind == Hit::ANNO || pressHit.kind == Hit::ANNO_HANDLE)) {
+            const Anno* anno = doc.anno(pressHit.anno);
+            if (anno && anno->kind == AnnoKind::Text) {
+                selAnnos = {anno->id};
+                selParts.clear(); selWires.clear(); selNotes.clear();
+                beginInlineAnnoEdit(anno->id);
+                drag = DRAG_NONE;
+                canvasOwnsPointer = false;
+                in.pressed = false;
+                return;
+            }
+        }
         lastMouse = m;
         longPressFired = false;
         if (!spaceDown) {
@@ -881,17 +952,24 @@ void App::canvasInput() {
             case DRAG_ANNO: {
                 Anno* a = doc.anno(dragAnno);
                 if (!a) break;
-                if (dragAnnoHandle >= 0) {
+                if (dragAnnoHandle == kAnnoRotateHandle && a->kind == AnnoKind::Image) {
+                    // Turning a picture: no grid snapping, Shift steps it by 15°.
+                    annoMoveHandle(*a, kAnnoRotateHandle, w, 0.f, in.shift());
+                } else if (dragAnnoHandle >= 0) {
                     Vec2 b = snapToGrid ? snapv(w, gridSize(view) / 2) : w;
-                    annoMoveHandle(*a, dragAnnoHandle, b);
+                    // Shift on a picture's handle keeps the width/height ratio it had when
+                    // the drag began (corner handles and edge handles alike).
+                    float keep = (in.shift() && a->kind == AnnoKind::Image) ? dragAnnoAspect : 0.f;
+                    annoMoveHandle(*a, dragAnnoHandle, b, keep, false);
                 } else {
                     Vec2 d = w - pressWorld;
                     if (snapToGrid) d = snapv(d, gridSize(view) / 2);
                     for (auto& kv : moveAnnoStart) {
                         Anno* m = doc.anno(kv.first);
                         if (!m) continue;
-                        m->a = kv.second.first + d;
-                        m->b = kv.second.second + d;
+                        m->a = kv.second.first;
+                        m->b = kv.second.second;
+                        annoTranslate(*m, d);
                     }
                 }
                 changed();
@@ -1007,6 +1085,18 @@ std::vector<MenuItem> App::contextMenu(const Hit& h) {
             for (int id : selAnnos) if (Anno* a = doc.anno(id)) a->dashed = !a->dashed;
             changed();
         }));
+        // A picture's "dashed line" is its frame: offer the frame itself here too.
+        if (!selAnnos.empty()) {
+            const Anno* first = doc.anno(*selAnnos.begin());
+            if (first && first->kind == AnnoKind::Image) {
+                bool framed = !first->framed;
+                m.push_back(item(tr("anno.framed"), [this, framed]() {
+                    checkpoint();
+                    for (int id : selAnnos) if (Anno* a = doc.anno(id)) a->framed = framed;
+                    changed();
+                }));
+            }
+        }
         m.push_back(MenuItem::sep());
         m.push_back(item(tr("insp.btn.delete_anno"), [this]() { deleteSelection(); }, "Del"));
     } else {
@@ -1171,6 +1261,89 @@ void App::drawPartIcon(const PartDefPtr& def, Rect r) {
     }
 }
 
+// A picture annotation: the backdrop behind its transparent pixels, the picture
+// itself (or a placeholder when it cannot be decoded), then the optional frame and the
+// selection handles. Everything follows Anno::rotation: clockwise about the centre.
+void App::drawImageAnno(const Anno& a, int v, const Camera& c, float zoom, float uiScale, bool selected, bool hovered) {
+    const float s = uiScale > 0 ? uiScale : 1.f;
+    const float z = std::max(zoom, 1e-6f);
+    auto S = [&](Vec2 w) { return c.pan + w * zoom; };
+    const Rect box = annoImageRect(a);
+    const Vec2 sz(box.w, box.h);
+    const Vec2 ctr = S(annoImageCenter(a));
+    Vec2 corner[4];
+    for (int i = 0; i < 4; i++) corner[i] = S(annoImageCorner(a, i));
+
+    // 1 — the backdrop: white paper behind a transparent logo, dark for a screenshot…
+    if (a.fill & 0xFF) g.fillPoly({corner[0], corner[1], corner[2], corner[3]}, a.fill);
+
+    // 2 — the picture. The cache rasterizes an SVG at the size it is drawn at (so a
+    // zoomed symbol stays sharp) and decodes a bitmap once per size bucket.
+    const ImageBlob* blob = doc.image(a.image);
+    SDL_Texture* tex = nullptr;
+    if (blob) tex = imageCache.get(a.image, *blob, (int)std::ceil(std::max(sz.x, sz.y) * zoom));
+    const float wpx = std::max(1.f, sz.x * zoom), hpx = std::max(1.f, sz.y * zoom);
+    if (tex) {
+        g.image(tex, Rect(ctr.x - wpx / 2, ctr.y - hpx / 2, wpx, hpx), a.rotation);
+    } else if (wpx > 3 && hpx > 3) {
+        // No renderer, a broken file or a picture this build cannot decode: a dashed
+        // box with a cross, so the annotation is still visible and selectable.
+        g.fillPoly({corner[0], corner[1], corner[2], corner[3]}, rgba(236, 238, 241));
+        const float ph = std::max(1.f, s), da = std::max(6 * s, 1.f), ga = std::max(4 * s, 1.f);
+        const uint32_t grid = rgba(150, 156, 166);
+        for (int i = 0; i < 4; i++) g.dashedLine(corner[i], corner[(i + 1) % 4], ph, da, ga, grid);
+        g.dashedLine(corner[0], corner[2], ph, da, ga, grid);
+        g.dashedLine(corner[1], corner[3], ph, da, ga, grid);
+    }
+
+    // 3 — the optional frame: dashed or solid, width from the same steps the shapes use.
+    // On the PCB markup is always dashed (a solid line there would read as copper).
+    if (a.framed) {
+        const bool dashed = a.dashed || v == PCB;
+        const float width = annoStrokePx(a, uiScale);
+        const float dash = std::max(7 * s, width * 3.5f), gap = std::max(5 * s, width * 2.5f);
+        for (int i = 0; i < 4; i++) {
+            const Vec2 q0 = corner[i], q1 = corner[(i + 1) % 4];
+            if (dashed) g.dashedLine(q0, q1, width, dash, gap, a.stroke);
+            else g.line(q0, q1, width, a.stroke);
+        }
+    }
+
+    // 4 — the selection frame is the picture's own box (grown a little), rotated with it.
+    auto grownCorners = [&](float growPx, Vec2 out[4]) {
+        Anno grown = a;
+        const float gw = growPx / z;
+        grown.b = sz + Vec2(2 * gw, 2 * gw);
+        grown.a = annoImageCenter(a) - grown.b / 2;
+        for (int i = 0; i < 4; i++) out[i] = S(annoImageCorner(grown, i));
+    };
+    if (hovered && !selected) {
+        Vec2 q[4];
+        grownCorners(2 * s, q);
+        for (int i = 0; i < 4; i++) g.line(q[i], q[(i + 1) % 4], std::max(1.f, s), withAlpha(rgba(28, 116, 222), 90));
+    }
+    if (selected) {
+        Vec2 q[4];
+        grownCorners(3 * s, q);
+        for (int i = 0; i < 4; i++) g.line(q[i], q[(i + 1) % 4], std::max(1.f, s), withAlpha(rgba(28, 116, 222), 170));
+        const float hh = 9 * s;
+        for (int i = 0; i < annoHandleCount(a); i++) {
+            Vec2 h = S(annoHandleAt(a, i));
+            Rect hr(h.x - hh / 2, h.y - hh / 2, hh, hh);
+            g.fillRect(hr, rgba(255, 255, 255));
+            g.strokeRect(hr, std::max(1.f, s), rgba(28, 116, 222));
+        }
+        // The rotation handle sits on a short stem above the top edge.
+        Vec2 topMid = S(annoImageCorner(a, 4));
+        Vec2 rot = S(annoRotateHandleAt(a, kRotateHandlePx * s / z));
+        g.line(topMid, rot, std::max(1.f, s), withAlpha(rgba(28, 116, 222), 120));
+        const float rr = hh / 2;
+        g.fillCircle(rot, rr, rgba(255, 255, 255));
+        g.strokeCircle(rot, rr, std::max(1.f, s), rgba(28, 116, 222));
+        g.arc(rot, rr * 0.5f, -60, 200, std::max(1.f, s), rgba(28, 116, 222));  // a turning arrow
+    }
+}
+
 void App::drawCanvas(int v, const Camera& c, Rect vp, bool exporting) {
     float s = ui.s, z = c.zoom;
     auto S = [&](Vec2 w) { return c.pan + w * z; };
@@ -1283,8 +1456,16 @@ void App::drawCanvas(int v, const Camera& c, Rect vp, bool exporting) {
     for (auto& a : doc.annos) {
         if (a.view != v) continue;
         if (!exporting && (a.hidden || !layerShown(v, LY_ANNO))) continue;
+        // Also here, so exports and video frames (which draw without input) hug the text.
+        if (a.kind == AnnoKind::Text && a.pointText) annoFitText(a, g);
         bool sel = selVisible && selAnnos.count(a.id) > 0;
         bool hov = selVisible && hover.anno == a.id;
+        // Pictures need the texture cache, so they are drawn by the canvas itself; the
+        // shape and text kinds stay in drawAnno().
+        if (a.kind == AnnoKind::Image) {
+            drawImageAnno(a, v, c, z, s, sel, hov);
+            continue;
+        }
         drawAnno(g, a, c.pan, z, s, sel, hov);
     }
 

@@ -7,6 +7,7 @@
 
 #include "anno.h"
 #include "geom.h"
+#include "image.h"
 #include "json.h"
 #include "partlib.h"
 
@@ -96,6 +97,11 @@ public:
     std::vector<Wire> wires;
     std::vector<Note> notes;
     std::vector<Anno> annos;   // markup drawn over the design (never connected)
+    // Pictures used by image annotations, keyed by their content hash (imageKey).
+    // Immutable in a session: importing the same picture twice stores it once.
+    // Saved with the design (only the entries an annotation still points at), but
+    // never into an undo snapshot — see Document::toJson.
+    std::map<std::string, ImageBlob> images;
     DesignRules rules;
     int revision = 0;        // bumped on every change, used for caches
     int nextGroup = 1;       // hierarchy group ids (0 = not grouped)
@@ -111,6 +117,15 @@ public:
     Anno* anno(int id);
     const Anno* anno(int id) const;
     int partIndex(int id) const;
+
+    // Pictures. addImage() stores the blob under its content key (replacing an
+    // identical one) and returns that key; image() is nullptr for unknown keys.
+    std::string addImage(const ImageBlob& blob);
+    const ImageBlob* image(const std::string& key) const;
+    // Drops pictures no annotation refers to. Loading a design calls this (the
+    // previous design's pictures would otherwise stay in memory); the editor may
+    // also call it after an image annotation is deleted.
+    int pruneImages();
 
     // ---- hierarchy --------------------------------------------------------
     // The z-order is the order of `parts` (back to front). A group is a run of
@@ -136,7 +151,10 @@ public:
     void touch() { revision++; }
 
     // full = include save timestamp and embedded part library (off for undo snapshots)
-    Json toJson(bool full = true) const;
+    // withImages = include the pictures the annotations refer to. Full saves always do;
+    // undo snapshots never do (150 of them would hold 150 copies of every photo), while
+    // the internal clipboard asks for them without the rest of the "full" form.
+    Json toJson(bool full = true, bool withImages = false) const;
     bool fromJson(const Json& j, std::string* err);
     std::string serialize(bool pretty = true) const { return toJson().dump(pretty ? 1 : -1); }
     std::string snapshot() const { return toJson(false).dump(-1); }

@@ -56,6 +56,7 @@ bool App::init(int argc, char** argv) {
     SDL_SetRenderVSync(ren, 1);
     SDL_SetRenderDrawBlendMode(ren, SDL_BLENDMODE_BLEND);
     g.init(ren);
+    imageCache.setRenderer(ren);  // picture annotations rasterize/cache here
     ui.g = &g;
     ui.in = &in;
     ui.window = win;
@@ -101,6 +102,8 @@ bool App::init(int argc, char** argv) {
 void App::shutdown() {
     autosave(true);
     g.shutdown();
+    imageCache.clear();  // its textures belong to the renderer we are about to destroy
+    imageCache.setRenderer(nullptr);
     if (ren) SDL_DestroyRenderer(ren);
     if (win) SDL_DestroyWindow(win);
 }
@@ -229,6 +232,8 @@ static void restoreSnapshot(Document& doc, const std::string& s) {
     int rev = doc.revision;
     std::string title = doc.title;
     std::string err;
+    // Snapshots carry no picture bytes (Document::toJson leaves them out): the store
+    // is content addressed and immutable, so deserialize() keeps what is in memory.
     doc.deserialize(s, &err);
     doc.revision = rev + 1;
 }
@@ -371,6 +376,15 @@ static bool endsWith(const std::string& s, const std::string& suf) {
     return a == suf;
 }
 
+// A dropped or picked file is treated as a picture when its name says so; the bytes
+// themselves are sniffed by imageImport, never trusted from the name.
+static bool isImagePath(const std::string& p) {
+    static const char* exts[] = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".psd", ".tga", ".targa"};
+    for (const char* e : exts)
+        if (endsWith(p, e)) return true;
+    return false;
+}
+
 bool App::loadFile(const std::string& path) {
     bool ok = false;
     std::string text = readTextFile(path, &ok);
@@ -406,6 +420,9 @@ bool App::loadFile(const std::string& path) {
     std::string err;
     std::vector<std::string> before;
     if (!doc.fromJson(j, &err)) { ui.dialog(tr("dlg.open_failed"), {err}, {}); return false; }
+    // fromJson keeps the pictures already in memory (undo snapshots carry no bytes);
+    // for a different design the previous ones are just dead weight.
+    doc.pruneImages();
     customEntries.clear();
     for (auto& lj : j["library"].items())
         if (isCustomType(lj["type"].str())) customEntries.push_back({lj["type"].str(), lj["title"].str(), "Custom", {}});
@@ -878,8 +895,16 @@ void App::copySelection(bool cut) {
     }
     for (auto& n : doc.notes) if (selNotes.count(n.id)) clip.notes.push_back(n);
     for (auto& a : doc.annos) if (selAnnos.count(a.id)) clip.annos.push_back(a);
+    // …and the pictures those annotations refer to, or a paste elsewhere would show empty
+    // frames. The store is content addressed, so copying a picture twice costs one entry.
+    for (auto& a : clip.annos)
+        if (!a.image.empty())
+            if (const ImageBlob* b = doc.image(a.image)) clip.images.emplace(a.image, *b);
     clip.nextId = doc.nextId;
-    SDL_SetClipboardText(clip.serialize(false).c_str());
+    // Pictures travel with the markup that refers to them. The clipboard asks for the
+    // bytes without the rest of the full form (no timestamp, no part library); on paste
+    // they are merged back into the content-addressed store.
+    SDL_SetClipboardText(clip.toJson(false, true).dump(-1).c_str());
     if (cut) deleteSelection();
     else ui.toast(trn("toast.copied", (long long)(clip.parts.size() + clip.wires.size() + clip.notes.size() + clip.annos.size())));
 }
@@ -890,8 +915,22 @@ void App::paste() {
     SDL_free(t);
     Document clip;
     std::string err;
-    if (text.empty() || !clip.deserialize(text, &err)) { ui.toast(tr("toast.nothing_to_paste")); return; }
+    if (text.empty() || !clip.deserialize(text, &err)) {
+        // Not our clipboard JSON: a copied picture (a screenshot, an image from a browser),
+        // then a copied path to a picture file. Our own JSON goes first, so copying markup
+        // in this app and pasting it never turns into a picture by accident.
+        if (pasteClipboardImage()) return;
+        if (text.find('\n') == std::string::npos && isImagePath(text) && SDL_GetPathInfo(text.c_str(), nullptr)) {
+            insertImageFile(text);
+            return;
+        }
+        ui.toast(tr("toast.nothing_to_paste"));
+        return;
+    }
     checkpoint();
+    // The pictures the pasted markup refers to: the store is content addressed, so
+    // adding them is idempotent and undo/redo keeps them (see Document::fromJson).
+    for (auto& kv : clip.images) doc.images.emplace(kv.first, kv.second);
     std::map<int, int> idMap;
     selParts.clear(); selWires.clear(); selNotes.clear(); selAnnos.clear();
     Vec2 off(200, 200);
@@ -931,8 +970,7 @@ void App::paste() {
     for (auto& at : clip.annos) {
         Anno a = at;
         a.id = doc.newId();
-        a.a += off;
-        a.b += off;
+        annoTranslate(a, off);
         doc.annos.push_back(a);
         if (a.view == view) selAnnos.insert(a.id);
     }
@@ -1034,6 +1072,108 @@ void App::addAnno(AnnoKind kind) {
     selAnnos = {a.id};
     changed();
     if (compact) drawerInspector = true;
+}
+
+// ---------------------------------------------------------------------------
+// Pictures: insert, paste, drop (formats and limits live in image.h)
+// ---------------------------------------------------------------------------
+
+Anno* App::addImageAnno(const ImageBlob& blob) {
+    if (readOnly || blob.bytes.empty() || blob.w <= 0 || blob.h <= 0) return nullptr;
+    // The natural size in world units, then capped to about 60% of what is on screen:
+    // a screenshot or a phone photo lands as something that can be worked with.
+    constexpr float kWorldPerPx = 12.f;  // a 96 dpi picture at the app's scale
+    Vec2 size((float)blob.w * kWorldPerPx, (float)blob.h * kWorldPerPx);
+    const float z = std::max(cam[view].zoom, 1e-6f);
+    const float maxW = std::max(240.f, rCanvas.w * 0.6f / z), maxH = std::max(160.f, rCanvas.h * 0.6f / z);
+    const float k = std::min(1.f, std::min(maxW / size.x, maxH / size.y));
+    size = size * k;
+    Anno a;
+    a.id = doc.newId();
+    a.view = view;
+    a.kind = AnnoKind::Image;
+    a.image = doc.addImage(blob);  // content addressed: the same file placed twice is one copy
+    a.b = size;
+    a.a = toWorld(rCanvas.center()) - size / 2;
+    a.stroke = annoPalette()[0];
+    a.dashed = false;  // a picture is frameless by default; the border is opt-in
+    a.framed = false;
+    checkpoint();
+    doc.annos.push_back(a);
+    selParts.clear();
+    selWires.clear();
+    selNotes.clear();
+    selAnnos = {a.id};
+    changed();
+    if (compact) drawerInspector = true;
+    return doc.anno(a.id);
+}
+
+bool App::insertImageBytes(const std::string& bytes, const std::string& name) {
+    if (readOnly) return false;
+    ImageBlob blob;
+    std::string err, note;
+    if (!imageImport(bytes, name, &blob, &err, &note)) {
+        ui.toast(trf("toast.image_failed", {err}), 6);
+        return false;
+    }
+    if (!addImageAnno(blob)) return false;
+    if (!note.empty()) ui.toast(trf("toast.image_scaled", {note}), 5);
+    return true;
+}
+
+bool App::insertImageFile(const std::string& path) {
+    size_t size = 0;
+    void* data = SDL_LoadFile(path.c_str(), &size);
+    if (!data) {
+        ui.toast(trf("toast.image_open_failed", {SDL_GetError()}), 6);
+        return false;
+    }
+    std::string bytes((const char*)data, size);
+    SDL_free(data);
+    return insertImageBytes(bytes, path);
+}
+
+void App::insertImageDialog() {
+#ifdef __EMSCRIPTEN__
+    webPickImage();
+    return;
+#endif
+    const SDL_DialogFileFilter f[] = {{tr("filter.images").c_str(), "png;jpg;jpeg;gif;bmp;webp;svg;tga"}};
+    auto* ctx = new DialogCtx{this, [this](const std::string& p) { insertImageFile(p); }, nullptr};
+    SDL_ShowOpenFileDialog(dialogCallback, ctx, win, f, 1, documentsDir().c_str(), false);
+}
+
+// Ctrl+V with a picture on the system clipboard: the same import path the menu and a
+// dropped file use. Windows (and most desktops) hand bitmaps over as image/bmp.
+bool App::pasteClipboardImage() {
+    static const char* kMimes[] = {"image/png", "image/webp", "image/jpeg", "image/svg+xml", "image/bmp"};
+    for (const char* mime : kMimes) {
+        if (!SDL_HasClipboardData(mime)) continue;
+        size_t len = 0;
+        void* data = SDL_GetClipboardData(mime, &len);
+        if (!data) continue;
+        std::string bytes((const char*)data, len);
+        SDL_free(data);
+        if (bytes.empty()) continue;
+        return insertImageBytes(bytes, mime);
+    }
+    return false;
+}
+
+void App::setImageRotation(const std::set<int>& ids, float degrees) {
+    float deg = std::fmod(degrees, 360.f);
+    if (deg <= -180.f) deg += 360.f;
+    if (deg > 180.f) deg -= 360.f;
+    std::vector<Anno*> targets;
+    for (int id : ids) {
+        Anno* a = doc.anno(id);
+        if (a && a->kind == AnnoKind::Image && std::fabs(a->rotation - deg) > 0.001f) targets.push_back(a);
+    }
+    if (targets.empty()) return;
+    checkpoint();
+    for (Anno* a : targets) a->rotation = deg;
+    changed();
 }
 
 void App::setPartProp(int partId, const std::string& key, const std::string& value) {
@@ -1174,7 +1314,7 @@ void App::handleShortcuts() {
                     if (!endAttached) w->pts[i] += d;
                 }
                 for (int id : selNotes) if (auto* n = doc.note(id)) n->pos += d;
-                for (int id : selAnnos) if (auto* an = doc.anno(id)) { an->a += d; an->b += d; }
+                for (int id : selAnnos) if (auto* an = doc.anno(id)) annoTranslate(*an, d);
                 doc.syncWireEnds();
                 changed();
                 break;
@@ -1217,16 +1357,19 @@ SDL_AppResult App::event(const SDL_Event& e) {
             in.mouse = Vec2(e.button.x, e.button.y) * density;
             in.touch = e.button.which == SDL_TOUCH_MOUSEID;
             if (e.button.button == SDL_BUTTON_LEFT) {
+                ++in.pressSerial;
                 in.down = true;
                 in.pressed = true;
                 in.pressPos = in.mouse;
                 in.pressTime = SDL_GetTicks();
                 in.doubleClick = e.button.clicks >= 2;
             } else if (e.button.button == SDL_BUTTON_RIGHT) {
+                ++in.pressSerial;
                 in.rightPressed = true;
                 in.rightDown = true;
                 in.pressPos = in.mouse;
             } else if (e.button.button == SDL_BUTTON_MIDDLE) {
+                ++in.pressSerial;
                 in.middleDown = true;
                 in.middlePressed = true;
                 in.pressPos = in.mouse;
@@ -1297,6 +1440,7 @@ SDL_AppResult App::event(const SDL_Event& e) {
             std::string path = e.drop.data ? e.drop.data : "";
             if (!path.empty()) runOnMain([this, path]() {
                 if (endsWith(path, ".dezpart")) loadFile(path);
+                else if (isImagePath(path)) insertImageFile(path);  // a picture lands on the canvas
                 else confirmDiscard([this, path]() { loadFile(path); });
             });
             break;

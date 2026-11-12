@@ -1,2 +1,7 @@
 minih264 b0baea7a80ef9d12da97301dd1099b8791b5ba43 2020-12-10
 minimp4 2a3014a7753cfcba4442adeb469431967238fe6a 2026-09-25
+stb_image v2.31 78770d85c4d94787a56c7859017da963bc4f3439 2026-11-12
+stb_image_write v1.17 78770d85c4d94787a56c7859017da963bc4f3439 2026-11-12
+stb_image_resize2 v2.18 (deprecated/ in the stb repo) 78770d85c4d94787a56c7859017da963bc4f3439 2026-11-12
+nanosvg + nanosvgrast 239e102ec2c691f2902e20ace2ed36ee4a35cfe6 2026-07-09
+libwebp 1.5.0 (decoder subset: src/dec, src/dsp incl. SSE2/SSE4.1/NEON, src/utils, src/webp) v1.5.0 2025-04-04

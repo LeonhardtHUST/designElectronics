@@ -298,6 +298,24 @@ EM_JS(void, de_js_pick_file, (const char* accept), {
     input.click();
 });
 
+// Same picker, for a picture: the file lands in the virtual FS and the app imports it as
+// an image annotation instead of opening it as a design.
+EM_JS(void, de_js_pick_image, (const char* accept), {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = UTF8ToString(accept);
+    input.onchange = async () => {
+        const f = input.files && input.files[0];
+        if (!f) return;
+        const buf = new Uint8Array(await f.arrayBuffer());
+        const path = '/tmp/' + f.name.split('/').join('_').split(String.fromCharCode(92)).join('_');
+        try { FS.mkdir('/tmp'); } catch (e) {}
+        FS.writeFile(path, buf);
+        Module.ccall('de_web_opened_image', null, ['string'], [path]);
+    };
+    input.click();
+});
+
 // Text fields: while one is being edited, a real <input>/<textarea> sits over it, so phones get
 // their keyboard, cursor handles and cut/copy/paste. Coordinates come in canvas pixels.
 EM_JS_DEPS(de_edit, "$stringToNewUTF8");
@@ -366,7 +384,7 @@ EM_JS(void, de_js_edit_init, (), {
     }, { capture: true, passive: true });
 });
 
-EM_JS(void, de_js_edit_begin, (float x, float y, float w, float h, const char* text, int multi, float px, const char* color), {
+EM_JS(void, de_js_edit_begin, (float x, float y, float w, float h, const char* text, int multi, float px, const char* color, int selectAll), {
     const st = Module.deEdit;
     const el = multi ? st.area : st.input;
     st.show(el, x, y, w, h, px);
@@ -377,7 +395,7 @@ EM_JS(void, de_js_edit_begin, (float x, float y, float w, float h, const char* t
     st.action = 0;
     if (document.activeElement !== el) el.focus();
     const n = el.value.length;
-    el.setSelectionRange(n, n);
+    el.setSelectionRange(selectAll ? 0 : n, n);
 });
 EM_JS(void, de_js_edit_place, (float x, float y, float w, float h, float px), {
     const st = Module.deEdit;
@@ -413,8 +431,8 @@ std::string cssColor(uint32_t c) {
 }
 void installNativeEdit(UI& ui) {
     de_js_edit_init();
-    ui.native.begin = [](Rect r, const std::string& text, bool multi, float px) {
-        de_js_edit_begin(r.x, r.y, r.w, r.h, text.c_str(), multi, px, cssColor(g_webApp->ui.th.text).c_str());
+    ui.native.begin = [](Rect r, const std::string& text, bool multi, float px, bool selectAll) {
+        de_js_edit_begin(r.x, r.y, r.w, r.h, text.c_str(), multi, px, cssColor(g_webApp->ui.th.text).c_str(), selectAll ? 1 : 0);
     };
     ui.native.place = [](Rect r) { de_js_edit_place(r.x, r.y, r.w, r.h, editPx()); };
     ui.native.setText = [](const std::string& t) { de_js_edit_set(t.c_str()); };
@@ -438,6 +456,15 @@ extern "C" EMSCRIPTEN_KEEPALIVE void de_web_opened(const char* path) {
     std::string p = path;
     App* app = g_webApp;
     app->runOnMain([app, p]() { app->confirmDiscard([app, p]() { app->loadFile(p); }); });
+}
+
+// A picture picked in the browser: imported straight away, no discard prompt (nothing is
+// replaced, the design only gains an annotation).
+extern "C" EMSCRIPTEN_KEEPALIVE void de_web_opened_image(const char* path) {
+    if (!g_webApp) return;
+    std::string p = path;
+    App* app = g_webApp;
+    app->runOnMain([app, p]() { app->insertImageFile(p); });
 }
 #endif
 
@@ -465,5 +492,14 @@ void webPickFile(const char* accept) {
     de_js_pick_file(accept);
 #else
     (void)accept;
+#endif
+}
+
+// Insert ▸ Picture on the web: the browser's own file picker, filtered to pictures.
+void webPickImage() {
+#ifdef __EMSCRIPTEN__
+    de_js_pick_image("image/png,image/jpeg,image/gif,image/bmp,image/webp,image/svg+xml,.png,.jpg,.jpeg,.gif,.bmp,.webp,.svg,.tga");
+#else
+    (void)0;  // desktop uses SDL_ShowOpenFileDialog (App::insertImageDialog)
 #endif
 }

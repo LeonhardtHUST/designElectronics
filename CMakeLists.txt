@@ -64,6 +64,8 @@ set(DE_SOURCES
   src/panels_ai.cpp
   src/partdata.cpp
   src/partmodels.cpp
+  src/image.cpp
+  src/image_impl.cpp
 )
 
 # Parts library data (parts/*.txt), compiled in.
@@ -93,6 +95,73 @@ add_custom_command(
   VERBATIM)
 list(APPEND DE_SOURCES ${DE_I18N_BLOB})
 
+# ---------------------------------------------------------------------------
+# WebP decoding. The vendored libwebp (1.5.0, BSD, see third_party/libwebp/COPYING)
+# ships as a small static library holding only the decoder. The SSE2/SSE4.1 and NEON
+# sources are plain C intrinsics guarded by WEBP_USE_*: each compiles to nothing on the
+# other architectures (and on Emscripten), and arm64 (Apple silicon, Android) needs the
+# NEON ones because libwebp omits the plain C versions there. The other picture
+# formats come from stb_image (PNG/JPEG/GIF/BMP/PSD, third_party/stb) and nanosvg
+# (SVG, third_party/nanosvg), both expanded in src/image_impl.cpp.
+# ---------------------------------------------------------------------------
+set(DE_WEBP_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party/libwebp)
+set(DE_WEBP_SOURCES
+  ${DE_WEBP_DIR}/src/dec/alpha_dec.c
+  ${DE_WEBP_DIR}/src/dec/buffer_dec.c
+  ${DE_WEBP_DIR}/src/dec/frame_dec.c
+  ${DE_WEBP_DIR}/src/dec/idec_dec.c
+  ${DE_WEBP_DIR}/src/dec/io_dec.c
+  ${DE_WEBP_DIR}/src/dec/quant_dec.c
+  ${DE_WEBP_DIR}/src/dec/tree_dec.c
+  ${DE_WEBP_DIR}/src/dec/vp8_dec.c
+  ${DE_WEBP_DIR}/src/dec/vp8l_dec.c
+  ${DE_WEBP_DIR}/src/dec/webp_dec.c
+  ${DE_WEBP_DIR}/src/dsp/alpha_processing.c
+  ${DE_WEBP_DIR}/src/dsp/alpha_processing_neon.c
+  ${DE_WEBP_DIR}/src/dsp/alpha_processing_sse2.c
+  ${DE_WEBP_DIR}/src/dsp/alpha_processing_sse41.c
+  ${DE_WEBP_DIR}/src/dsp/cpu.c
+  ${DE_WEBP_DIR}/src/dsp/dec.c
+  ${DE_WEBP_DIR}/src/dsp/dec_neon.c
+  ${DE_WEBP_DIR}/src/dsp/dec_clip_tables.c
+  ${DE_WEBP_DIR}/src/dsp/dec_sse2.c
+  ${DE_WEBP_DIR}/src/dsp/dec_sse41.c
+  ${DE_WEBP_DIR}/src/dsp/filters.c
+  ${DE_WEBP_DIR}/src/dsp/filters_neon.c
+  ${DE_WEBP_DIR}/src/dsp/filters_sse2.c
+  ${DE_WEBP_DIR}/src/dsp/lossless.c
+  ${DE_WEBP_DIR}/src/dsp/lossless_neon.c
+  ${DE_WEBP_DIR}/src/dsp/lossless_sse2.c
+  ${DE_WEBP_DIR}/src/dsp/lossless_sse41.c
+  ${DE_WEBP_DIR}/src/dsp/rescaler.c
+  ${DE_WEBP_DIR}/src/dsp/rescaler_neon.c
+  ${DE_WEBP_DIR}/src/dsp/rescaler_sse2.c
+  ${DE_WEBP_DIR}/src/dsp/upsampling.c
+  ${DE_WEBP_DIR}/src/dsp/upsampling_neon.c
+  ${DE_WEBP_DIR}/src/dsp/upsampling_sse2.c
+  ${DE_WEBP_DIR}/src/dsp/upsampling_sse41.c
+  ${DE_WEBP_DIR}/src/dsp/yuv.c
+  ${DE_WEBP_DIR}/src/dsp/yuv_neon.c
+  ${DE_WEBP_DIR}/src/dsp/yuv_sse2.c
+  ${DE_WEBP_DIR}/src/dsp/yuv_sse41.c
+  ${DE_WEBP_DIR}/src/utils/bit_reader_utils.c
+  ${DE_WEBP_DIR}/src/utils/color_cache_utils.c
+  ${DE_WEBP_DIR}/src/utils/filters_utils.c
+  ${DE_WEBP_DIR}/src/utils/huffman_utils.c
+  ${DE_WEBP_DIR}/src/utils/palette.c
+  ${DE_WEBP_DIR}/src/utils/quant_levels_dec_utils.c
+  ${DE_WEBP_DIR}/src/utils/random_utils.c
+  ${DE_WEBP_DIR}/src/utils/rescaler_utils.c
+  ${DE_WEBP_DIR}/src/utils/thread_utils.c
+  ${DE_WEBP_DIR}/src/utils/utils.c)
+add_library(de_webp STATIC ${DE_WEBP_SOURCES})
+target_include_directories(de_webp PUBLIC ${DE_WEBP_DIR} ${DE_WEBP_DIR}/src)
+if(MSVC)
+  target_compile_options(de_webp PRIVATE /W0)
+else()
+  target_compile_options(de_webp PRIVATE -w)
+endif()
+
 if(ANDROID)
   add_library(main SHARED ${DE_SOURCES})
   set(DE_TARGET main)
@@ -101,7 +170,15 @@ else()
   set(DE_TARGET designElectronics)
 endif()
 
-target_include_directories(${DE_TARGET} PRIVATE src)
+target_include_directories(${DE_TARGET} PRIVATE src
+  ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
+  ${CMAKE_CURRENT_SOURCE_DIR}/third_party/nanosvg)
+
+# The vendored single-header libraries are third-party code: their warnings are
+# not ours to chase.
+if(MSVC)
+  set_source_files_properties(src/image_impl.cpp PROPERTIES COMPILE_OPTIONS "/W0")
+endif()
 
 # HTTPS for GitHub sync (desktop). Without it, local version history still works.
 if(NOT ANDROID AND NOT IOS AND NOT EMSCRIPTEN)
@@ -113,7 +190,7 @@ if(NOT ANDROID AND NOT IOS AND NOT EMSCRIPTEN)
     message(STATUS "libcurl not found: GitHub sync disabled (local history still works)")
   endif()
 endif()
-target_link_libraries(${DE_TARGET} PRIVATE SDL3_ttf::SDL3_ttf SDL3::SDL3)
+target_link_libraries(${DE_TARGET} PRIVATE SDL3_ttf::SDL3_ttf SDL3::SDL3 de_webp)
 
 # Windows: SDL is linked as a DLL, so copy the runtime next to the executable.
 if(WIN32 AND NOT DE_VENDOR_SDL)
@@ -157,7 +234,7 @@ elseif(EMSCRIPTEN)
   target_link_options(${DE_TARGET} PRIVATE
     -sALLOW_MEMORY_GROWTH=1 -sFORCE_FILESYSTEM=1 -sINVOKE_RUN=0 -sEXIT_RUNTIME=0
     "-sEXPORTED_RUNTIME_METHODS=['FS','ccall','callMain']"
-    "-sEXPORTED_FUNCTIONS=['_main','_de_web_opened']"
+    "-sEXPORTED_FUNCTIONS=['_main','_de_web_opened','_de_web_opened_image']"
     "--preload-file=${CMAKE_SOURCE_DIR}/assets/fonts@/assets/fonts")
 elseif(NOT ANDROID)
   add_custom_command(TARGET ${DE_TARGET} POST_BUILD

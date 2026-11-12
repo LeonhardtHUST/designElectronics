@@ -95,6 +95,8 @@ std::vector<MenuItem> App::editMenu() {
     annos.children.push_back(item(tr("anno.kind.line"), [this]() { addAnno(AnnoKind::Line); }));
     annos.children.push_back(item(tr("anno.kind.circle"), [this]() { addAnno(AnnoKind::Circle); }));
     annos.children.push_back(item(tr("anno.kind.text"), [this]() { addAnno(AnnoKind::Text); }));
+    annos.children.push_back(MenuItem::sep());
+    annos.children.push_back(item(tr("menu.edit.add_image"), [this]() { insertImageDialog(); }));
     std::vector<MenuItem> m = {
         item(tr("menu.edit.undo"), [this]() { undo(); }, sc("Z"), !undoStack.empty()),
         item(tr("menu.edit.redo"), [this]() { redo(); }, sc("⇧Z"), !redoStack.empty()),
@@ -647,13 +649,19 @@ void App::drawInspector(Rect r) {
                 std::string t = a->text;
                 if (ui.textField("annotext" + std::to_string(aid), Rect(x, y, w, rowH), t, tr("anno.text"))) {
                     checkpoint();
-                    if (Anno* aa = doc.anno(aid)) annoSetText(*aa, t);
+                    if (Anno* aa = doc.anno(aid)) {
+                        annoSetText(*aa, t);
+                        annoFitText(*aa, g);  // a point text grows with its text straight away
+                    }
                     changed();
                 }
                 y += rowH + 6 * s;
                 auto bump = [&](float d) {
                     checkpoint();
-                    if (Anno* aa = doc.anno(aid)) annoBumpTextSize(*aa, d);
+                    if (Anno* aa = doc.anno(aid)) {
+                        annoBumpTextSize(*aa, d);
+                        annoFitText(*aa, g);  // the box follows the bigger glyphs
+                    }
                     changed();
                 };
                 float bw = 46 * s;
@@ -661,6 +669,123 @@ void App::drawInspector(Rect r) {
                 if (ui.button("annofs+", Rect(x + w - bw, y, bw, rowH), "A+", BTN_NORMAL, false, a->textSize < 399)) bump(8);
                 g.text({x + w / 2, y + rowH / 2}, std::to_string((int)std::lround(a->textSize)), 13 * s, ui.th.textDim, 1);
                 y += rowH + 6 * s;
+                // Regular or monospaced face: monospaced suits pin tables, code and aligned columns.
+                g.text({x, y + 9 * s}, tr("anno.font"), 12 * s, ui.th.textDim, 0);
+                y += 22 * s;
+                float fw = (w - 6 * s) / 2;
+                const FontFace faces[2] = {FONT_UI, FONT_MONO};
+                const char* faceKeys[2] = {"anno.font.regular", "anno.font.mono"};
+                for (int k = 0; k < 2; k++) {
+                    Rect fb(x + (float)k * (fw + 6 * s), y, fw, rowH);
+                    if (ui.button(std::string("annofont") + std::to_string(k), fb, "", BTN_CHIP, a->font == faces[k]) && a->font != faces[k]) {
+                        checkpoint();
+                        if (Anno* aa = doc.anno(aid)) {
+                            aa->font = faces[k];
+                            annoFitText(*aa, g);  // a face has its own widths: refit a point text
+                        }
+                        changed();
+                    }
+                    if (Anno* aa = doc.anno(aid))  // the label in its own face, so the choice previews itself
+                        g.text(fb.center(), tr(faceKeys[k]), 13 * s, aa->font == faces[k] ? ui.th.accentText : ui.th.text, 1, faces[k]);
+                }
+                y += rowH + 6 * s;
+                // Point text hugs its glyphs and never wraps; a text box keeps the frame
+                // the user sizes and wraps inside it. Switching to a box keeps the size
+                // just measured, switching back re-measures it.
+                g.text({x, y + 9 * s}, tr("anno.textmode"), 12 * s, ui.th.textDim, 0);
+                y += 22 * s;
+                const bool pointNow = a->pointText;
+                float mw = (w - 6 * s) / 2;
+                const char* modeKeys[2] = {"anno.textmode.point", "anno.textmode.box"};
+                for (int k = 0; k < 2; k++) {
+                    bool point = k == 0;
+                    Rect mb(x + (float)k * (mw + 6 * s), y, mw, rowH);
+                    if (ui.button(std::string("annotextmode") + std::to_string(k), mb, tr(modeKeys[k]), BTN_CHIP, point == pointNow) &&
+                        point != pointNow) {
+                        checkpoint();
+                        if (Anno* aa = doc.anno(aid)) {
+                            aa->pointText = point;
+                            annoFitText(*aa, g);  // to a box: keeps the measured size; to a point: fits again
+                        }
+                        changed();
+                    }
+                }
+                y += rowH + 6 * s;
+            }
+            if (a->kind == AnnoKind::Image) {
+                // What the picture is: format and pixel size, straight from the store.
+                const ImageBlob* blob = doc.image(a->image);
+                std::string info = blob ? trf("anno.image_info", {imageFormatLabel(blob->mime), std::to_string(blob->w), std::to_string(blob->h)})
+                                        : tr("anno.image_missing");
+                y += ui.wrappedText(Rect(x, y, w, 0), info, blob ? ui.th.textDim : ui.th.danger, 12.5f * s) + 8 * s;
+                // Rotation: stepped here, snapped while dragging the grip, reset to 0°.
+                g.text({x, y + 9 * s}, tr("anno.rotation"), 12 * s, ui.th.textDim, 0);
+                y += 22 * s;
+                const float rb = 46 * s;
+                if (ui.button("animrot-", Rect(x, y, rb, rowH), "−15°", BTN_NORMAL)) setImageRotation(selAnnos, a->rotation - 15.f);
+                if (ui.button("animrot0", Rect(x + rb + 6 * s, y, rb, rowH), tr("anno.rotation.reset"), BTN_NORMAL)) setImageRotation(selAnnos, 0.f);
+                if (ui.button("animrot+", Rect(x + 2 * (rb + 6 * s), y, rb, rowH), "+15°", BTN_NORMAL)) setImageRotation(selAnnos, a->rotation + 15.f);
+                g.text({x + 3 * (rb + 6 * s) + 4 * s, y + rowH / 2}, std::to_string((int)std::lround(a->rotation)) + "°", 13 * s, ui.th.text, 0);
+                y += rowH + 6 * s;
+                if (blob && blob->w > 0 && blob->h > 0) {
+                    // Undo any stretching: back to the picture's own width/height ratio.
+                    if (ui.button("animratio", Rect(x, y, w, rowH), tr("anno.ratio_original"), BTN_NORMAL)) {
+                        checkpoint();
+                        if (Anno* aa = doc.anno(aid)) aa->b.y = std::max(kImageMinSide, aa->b.x * (float)blob->h / (float)blob->w);
+                        changed();
+                    }
+                    y += rowH + 6 * s;
+                }
+                // Backdrop: solid colour behind the transparent pixels, or none at all.
+                g.text({x, y + 9 * s}, tr("anno.backdrop"), 12 * s, ui.th.textDim, 0);
+                y += 22 * s;
+                const char* bgKeys[5] = {"anno.backdrop.none", "anno.backdrop.white", "anno.backdrop.light",
+                                         "anno.backdrop.dark", "anno.backdrop.black"};
+                const uint32_t bgCols[5] = {0, rgba(255, 255, 255), rgba(235, 236, 238), rgba(70, 76, 84), rgba(20, 22, 26)};
+                float bsw = 30 * s, bx = x;
+                for (int k = 0; k < 5; k++) {
+                    Rect sb(bx, y, bsw, bsw);
+                    bool cur = a->fill == bgCols[k];
+                    if (ui.button("animbg" + std::to_string(k), sb, "", BTN_FLAT)) {
+                        checkpoint();
+                        if (Anno* aa = doc.anno(aid)) aa->fill = bgCols[k];
+                        changed();
+                    }
+                    if (bgCols[k] & 0xFF) {
+                        g.fillRect(sb.inset(4 * s), bgCols[k]);
+                    } else {  // "none": a crossed-out swatch
+                        g.fillRect(sb.inset(4 * s), rgba(255, 255, 255));
+                        g.dashedLine(sb.center() - Vec2(9 * s, 9 * s), sb.center() + Vec2(9 * s, 9 * s), std::max(1.f, s), 4 * s, 3 * s, rgba(200, 60, 60));
+                    }
+                    g.strokeRect(sb, std::max(1.f, s), cur ? ui.th.accent : ui.th.border);
+                    ui.tooltip(sb, tr(bgKeys[k]));
+                    bx += bsw + 6 * s;
+                }
+                y += bsw + 10 * s;
+                bool framed = a->framed;
+                if (ui.checkbox("animframe" + std::to_string(aid), Rect(x, y, w, rowH), tr("anno.framed"), framed)) {
+                    checkpoint();
+                    if (Anno* aa = doc.anno(aid)) aa->framed = framed;
+                    changed();
+                }
+                y += rowH + 6 * s;
+                if (a->framed) {
+                    g.text({x, y + 9 * s}, tr("anno.border"), 12 * s, ui.th.textDim, 0);
+                    y += 22 * s;
+                    const bool solid = !a->dashed;
+                    float hw = (w - 6 * s) / 2;
+                    if (ui.button("animstyle-solid", Rect(x, y, hw, rowH), tr("anno.border.solid"), BTN_CHIP, solid) && solid == false) {
+                        checkpoint();
+                        if (Anno* aa = doc.anno(aid)) aa->dashed = false;
+                        changed();
+                    }
+                    if (ui.button("animstyle-dash", Rect(x + hw + 6 * s, y, hw, rowH), tr("anno.border.dashed"), BTN_CHIP, !solid) && solid) {
+                        checkpoint();
+                        if (Anno* aa = doc.anno(aid)) aa->dashed = true;
+                        changed();
+                    }
+                    y += rowH + 6 * s;
+                }
             }
             auto heading2 = [&](const std::string& t) {
                 y += 8 * s;
@@ -686,14 +811,47 @@ void App::drawInspector(Rect r) {
                 cx += sw + 6 * s;
             }
             y += sw + 10 * s;
-            bool dashed = a->dashed;
-            if (ui.checkbox("annodash" + std::to_string(aid), Rect(x, y, w, rowH), tr("anno.dashed"), dashed)) {
-                checkpoint();
-                if (Anno* aa = doc.anno(aid)) aa->dashed = dashed;
-                changed();
+            // Stroke width: four steps, drawn to scale so the choice previews itself.
+            // A picture uses them for its frame, which only exists when it is framed.
+            const bool shape = a->kind == AnnoKind::Rect || a->kind == AnnoKind::Line || a->kind == AnnoKind::Circle;
+            const bool bordered = shape || (a->kind == AnnoKind::Image && a->framed);
+            if (bordered) {
+                heading2(tr("anno.width"));
+                const char* widthKeys[4] = {"anno.width.thin", "anno.width.medium", "anno.width.thick", "anno.width.heavy"};
+                float cw = x;
+                for (int k = 0; k < 4; k++) {
+                    std::string lbl = tr(widthKeys[k]);
+                    float bw = std::max(46 * s, g.textWidth(lbl, 12.5f * s) + 18 * s);
+                    if (cw + bw > x + w) { cw = x; y += 32 * s; }
+                    Rect wb(cw, y, bw, 26 * s);
+                    if (ui.button("anow" + std::to_string(k), wb, "", BTN_CHIP, a->widthStep == k) && a->widthStep != k) {
+                        checkpoint();
+                        if (Anno* aa = doc.anno(aid)) aa->widthStep = k;
+                        changed();
+                    }
+                    Anno sample = *a;
+                    sample.widthStep = k;
+                    float lw = annoStrokePx(sample, s);
+                    uint32_t tc = a->widthStep == k ? ui.th.accentText : ui.th.text;
+                    g.text({wb.center().x, wb.center().y - 6 * s}, lbl, 11.5f * s, tc, 1);
+                    g.line({wb.x + 6 * s, wb.b() - 4 * s}, {wb.r() - 6 * s, wb.b() - 4 * s}, std::max(1.f, lw),
+                           a->widthStep == k ? ui.th.accentText : ui.th.textDim);
+                    cw += bw + 6 * s;
+                }
+                y += 34 * s;
             }
-            y += rowH + 6 * s;
-            if (view == PCB) y += ui.wrappedText(Rect(x, y, w, 0), tr("anno.pcb_dashed"), ui.th.textDim, 12 * s) + 6 * s;
+            // Text has no outline, so a dashed stroke would change nothing: shapes only.
+            // A picture's dash style is its frame's, offered above as two chips.
+            if (a->kind != AnnoKind::Text && a->kind != AnnoKind::Image) {
+                bool dashed = a->dashed;
+                if (ui.checkbox("annodash" + std::to_string(aid), Rect(x, y, w, rowH), tr("anno.dashed"), dashed)) {
+                    checkpoint();
+                    if (Anno* aa = doc.anno(aid)) aa->dashed = dashed;
+                    changed();
+                }
+                y += rowH + 6 * s;
+                if (view == PCB) y += ui.wrappedText(Rect(x, y, w, 0), tr("anno.pcb_dashed"), ui.th.textDim, 12 * s) + 6 * s;
+            }
             if (ui.button("delanno", Rect(x, y, w, rowH), tr("insp.btn.delete_anno"), BTN_NORMAL)) deleteSelection();
             y += rowH + 12 * s;
         }
@@ -797,6 +955,7 @@ void App::drawToolbar() {
     tools.push_back({"t-line", "line", tr("tb.line"), [this]() { setTool(TOOL_LINE); }, tool == TOOL_LINE, true, tr("tip.tool_line")});
     tools.push_back({"t-circ", "circle", tr("tb.circle"), [this]() { setTool(TOOL_CIRCLE); }, tool == TOOL_CIRCLE, true, tr("tip.tool_circle")});
     tools.push_back({"t-text", "text", tr("tb.text"), [this]() { setTool(TOOL_TEXT); }, tool == TOOL_TEXT, true, tr("tip.tool_text")});
+    tools.push_back({"t-img", "image", tr("tb.image"), [this]() { insertImageDialog(); }, false, true, tr("tip.add_image")});
     if (!compact || view != PCB) tools.push_back({"t-note", "note", tr("tb.note"), [this]() { addNote(); }, false, true, tr("tip.add_note")});
     tools.push_back({"t-rot", "rotate", tr("tb.rotate"), [this]() { rotateSelection(1); }, false, !selParts.empty(), tr("tip.rotate")});
     if (!compact) tools.push_back({"t-flip", "flip", tr("tb.flip"), [this]() { flipSelection(); }, false, !selParts.empty(), tr("tip.flip")});
@@ -957,4 +1116,5 @@ void App::drawCanvasOverlay() {
             if (ui.iconButton("cfit", fit.inset(4 * s), "fit", "")) fitView(view, rCanvas);
         }
     }
+    drawInlineAnnoEditor();
 }

@@ -39,6 +39,12 @@ public:
     void fillPoly(const std::vector<Vec2>& pts, uint32_t col);  // ear clipping, any simple polygon
     void radialGlow(Vec2 c, float r, uint32_t col);
 
+    // A picture (see ImageCache in image.h). Drawn at `dst`, rotated by angleDeg
+    // degrees clockwise about dst's centre, tinted by `tint` (alpha 255 = as-is).
+    // Already-batched geometry is flushed first; the texture is sampled linearly.
+    // Does nothing for a null texture (a picture that failed to decode).
+    void image(SDL_Texture* tex, Rect dst, float angleDeg = 0, uint32_t tint = 0xFFFFFFFF);
+
     // text: pos.y is the vertical centre; align 0 left, 1 centre, 2 right
     float text(Vec2 pos, const std::string& s, float px, uint32_t col, int align = 0, FontFace face = FONT_UI, float angleDeg = 0);
     float textWidth(const std::string& s, float px, FontFace face = FONT_UI);

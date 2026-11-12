@@ -26,6 +26,7 @@ struct Input {
     std::vector<SDL_Keycode> keys;
     SDL_Keymod mods = 0;
     Vec2 pressPos;
+    uint32_t pressSerial = 0;
     Uint64 pressTime = 0;
     // pinch gesture (two fingers)
     bool pinching = false;
@@ -92,7 +93,7 @@ struct CodeEditorState {
 // Platform text editing. The web build sets these to overlay a real <input>/<textarea> on the
 // focused field, which brings the phone's keyboard, cursor handles and cut/copy/paste.
 struct NativeTextEdit {
-    void (*begin)(Rect r, const std::string& text, bool multiline, float px) = nullptr;
+    void (*begin)(Rect r, const std::string& text, bool multiline, float px, bool selectAll) = nullptr;
     void (*place)(Rect r) = nullptr;               // keep it over the field (sheets scroll, layouts change)
     void (*setText)(const std::string& text) = nullptr;
     int (*poll)(std::string& text) = nullptr;      // current text; returns 0 editing, 1 Enter, 2 Escape, 3 lost focus
@@ -166,11 +167,17 @@ public:
     void closeSheet() { sheets_.clear(); }
     bool sheetOpen(const std::string& id = "") const { return !sheets_.empty() && (id.empty() || sheets_.back().id == id); }
     void clearFocus();
+    void focusField(const std::string& id, bool selectAll);
+    void cancelPendingFocus() { pendingFocus_ = 0; pendingSelectAll_ = false; }
+    bool fieldFocused(const std::string& id) const;
 
     bool hasMenu() const { return !menus_.empty(); }
+    Rect menuBoundsForTest() const { return menus_.empty() ? Rect{} : menus_.front().rect; }
+    float menuScrollForTest() const { return menus_.empty() ? 0.f : menus_.front().scroll; }
+    float menuMaxScrollForTest() const;
 
 private:
-    struct Menu { Rect rect; std::vector<MenuItem> items; int open = -1; };
+    struct Menu { Rect rect; std::vector<MenuItem> items; int open = -1; float scroll = 0; uint32_t openSerial = 0; };
     struct Dialog { std::string title; std::vector<std::string> lines; std::vector<DialogButton> buttons; };
     struct Sheet { std::string id, title; float w, h; std::function<void(Rect)> draw; };
     std::vector<Sheet> sheets_;
@@ -188,7 +195,14 @@ private:
 
     size_t focus_ = 0;
     std::string editBuf_;
-    size_t caret_ = 0;
+    size_t caret_ = 0, anchor_ = 0;
+    size_t pendingFocus_ = 0;
+    bool pendingSelectAll_ = false, fieldDragging_ = false;
+    float fieldScrollX_ = 0;
+    int fieldFirstLine_ = 0;
+    bool eraseFieldSelection();
+    void fieldPointer(size_t position);
+    bool fieldKey(SDL_Keycode key, bool multiline);
     bool nativeOn_ = false, focusSeen_ = false;  // focused field is edited by `native`; drawn this frame
     std::vector<NativeTextEdit::Field> fieldRects_;
     void startEditing(Rect r, Rect box, bool multiline, float px);
@@ -212,4 +226,4 @@ private:
     Rect menuRect(Rect anchor, const std::vector<MenuItem>& items, bool above, bool side) const;
 };
 
-std::vector<std::string> wrapText(Gfx& g, const std::string& t, float px, float width);
+std::vector<std::string> wrapText(Gfx& g, const std::string& t, float px, float width, FontFace face = FONT_UI);

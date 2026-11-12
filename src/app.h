@@ -26,6 +26,7 @@ class App;
 void webRegisterApp(App* app);
 void webSaveAndDownload(const std::string& name, const std::function<void(const std::string&)>& write);
 void webPickFile(const char* accept);
+void webPickImage();  // <input type=file accept="image/*">: hands the bytes to App::insertImageFile
 
 struct Camera {
     Vec2 pan;          // screen position of world origin (pixels)
@@ -77,6 +78,10 @@ public:
     SDL_Window* win = nullptr;
     SDL_Renderer* ren = nullptr;
     Gfx g;
+    // Textures for the picture annotations: keyed by content key and size bucket, so a
+    // zoomed SVG is re-rasterized instead of stretched. Empty (and harmless) without a
+    // renderer, which is what the self-test sees.
+    ImageCache imageCache;
     UI ui;
     Input in;
     Document doc;
@@ -87,6 +92,18 @@ public:
     Camera cam[NUM_VIEWS];
     std::set<int> selParts, selWires, selNotes, selAnnos;
     CanvasTool tool = TOOL_SELECT;
+    int inlineAnnoEdit = -1;
+    Anno inlineAnnoOriginal;
+    std::string inlineAnnoText;
+    bool inlineAnnoCheckpoint = false;
+    size_t inlineAnnoUndoDepth = 0;
+    std::vector<std::string> inlineAnnoRedo;
+    int inlineAnnoRevision = -1;
+    void beginInlineAnnoEdit(int id);
+    void updateInlineAnnoText(const std::string& text);
+    void finishInlineAnnoEdit(bool cancel = false);
+    Rect inlineAnnoRect();
+    void drawInlineAnnoEditor();
     // Shape being dragged out by a tool: press point, current point, and whether a
     // drag is in progress (a click without a drag still makes a usable shape).
     bool annoDrawing = false;
@@ -106,6 +123,7 @@ public:
     std::map<int, std::pair<Vec2, Vec2>> moveAnnoStart;  // anno id -> (a, b) at drag start
     int dragAnno = -1;                             // annotation being moved or resized
     int dragAnnoHandle = -1;                       // handle index being dragged, -1 = whole shape
+    float dragAnnoAspect = 0.f;                    // picture w/h when its handle drag began (Shift keeps it)
     int anchorPart = -1;
     int dragWire = -1, dragWireEnd = -1, dragBend = -1;
     Vec2 rubberA, rubberB;
@@ -258,6 +276,21 @@ public:
     void addPart(const LibEntry& e, Vec2 world);
     void addNote();
     void addAnno(AnnoKind kind);  // a new annotation in the middle of the canvas
+
+    // ---- pictures (app.cpp + canvas.cpp) ----
+    // Insert a picture: the menu opens a file dialog (a <input type=file> on the web),
+    // dropping a file and Ctrl+V call the same two functions underneath.
+    void insertImageDialog();
+    bool insertImageFile(const std::string& path);                            // read → import → place
+    bool insertImageBytes(const std::string& bytes, const std::string& name); // import → place
+    bool pasteClipboardImage();  // true when the clipboard held a picture and it was placed
+    // One picture annotation: `blob` is stored under its content key, sized to the
+    // visible canvas (never wider/higher than ~60% of it) and centred on `centreWorld`
+    // (the middle of the canvas when the caller has no better idea).
+    Anno* addImageAnno(const ImageBlob& blob);
+    // Draws one picture annotation: backdrop, texture (or a placeholder), frame.
+    void drawImageAnno(const Anno& a, int v, const Camera& c, float zoom, float uiScale, bool selected, bool hovered);
+    void setImageRotation(const std::set<int>& ids, float degrees);  // inspector / handles
     void setPartProp(int partId, const std::string& key, const std::string& value);
     void bringToFront(bool front);
     void runAutoroute();
@@ -389,6 +422,9 @@ public:
     void zoomAt(float factor, Vec2 screen);
     // Every candidate under the pointer, ranked by layer priority and screen distance.
     void collectHits(Vec2 screen, std::vector<HitCand>& out);
+    // Re-measures every point text in `v` so its box (and hit box, and selection frame)
+    // follows the glyphs. Called once per frame before input handling.
+    void fitPointTexts(int v);
     // The winner of collectHits(); the public shape of "what did I click".
     Hit hitTest(Vec2 screen);
     // Screen-space minimum (6 px, 14 on touch) folded into world units, never

@@ -7,6 +7,8 @@
 #include <ctime>
 #include <set>
 
+#include "history.h"  // base64 for the picture store
+
 // ---------------------------------------------------------------------------
 // File helpers (SDL IO works with Android assets / content URIs too)
 // ---------------------------------------------------------------------------
@@ -48,6 +50,7 @@ void Document::clear() {
     wires.clear();
     notes.clear();
     annos.clear();
+    images.clear();  // a new design starts with no pictures
     rules = DesignRules();
     touch();
 }
@@ -79,6 +82,30 @@ const Anno* Document::anno(int id) const {
 int Document::partIndex(int id) const {
     for (size_t i = 0; i < parts.size(); i++) if (parts[i].id == id) return (int)i;
     return -1;
+}
+
+std::string Document::addImage(const ImageBlob& blob) {
+    std::string key = imageKey(blob);
+    images[key] = blob;  // identical content has the same key: stored once
+    return key;
+}
+
+const ImageBlob* Document::image(const std::string& key) const {
+    auto it = images.find(key);
+    return it == images.end() ? nullptr : &it->second;
+}
+
+int Document::pruneImages() {
+    std::set<std::string> used;
+    for (auto& a : annos)
+        if (!a.image.empty()) used.insert(a.image);
+    int dropped = 0;
+    for (auto it = images.begin(); it != images.end();) {
+        if (used.count(it->first)) { ++it; continue; }
+        it = images.erase(it);
+        dropped++;
+    }
+    return dropped;
 }
 
 // ---------------------------------------------------------------------------
@@ -258,7 +285,7 @@ void Document::syncWireEnds() {
 static Json vec(Vec2 v) { Json a = Json::array(); a.push(Json(std::round(v.x * 100) / 100)); a.push(Json(std::round(v.y * 100) / 100)); return a; }
 static Vec2 vecOf(const Json& j) { return {j[(size_t)0].f(), j[(size_t)1].f()}; }
 
-Json Document::toJson(bool full) const {
+Json Document::toJson(bool full, bool withImages) const {
     Json j = Json::object();
     j.set("format", kFileFormat);
     j.set("version", kFileVersion);
@@ -363,6 +390,31 @@ Json Document::toJson(bool full) const {
     Json aarr = Json::array();
     for (auto& a : annos) aarr.push(annoToJson(a));
     j.set("annos", aarr);
+
+    // Pictures: the bytes that image annotations point at. Written only for pictures
+    // something still refers to. A full save always carries them; an undo snapshot
+    // (full == false, withImages == false) keeps just the keys inside its annotations,
+    // so a 150-deep undo stack never holds 150 copies of every photo. The internal
+    // clipboard asks for them without the rest of the full form (see copySelection).
+    // Share links (compactJson) leave the bytes out on purpose: the whole design is
+    // deflated into a URL fragment and a picture would push it far past what browsers
+    // and chat apps accept, so a shared design shows its markup but not its pictures.
+    if (full || withImages) {
+        std::set<std::string> used;
+        for (auto& a : annos)
+            if (!a.image.empty()) used.insert(a.image);
+        Json imgs = Json::object();
+        for (auto& kv : images) {
+            if (!used.count(kv.first)) continue;
+            Json o = Json::object();
+            o.set("mime", kv.second.mime);
+            o.set("w", kv.second.w);
+            o.set("h", kv.second.h);
+            o.set("data", github::base64Encode(kv.second.bytes));
+            imgs.set(kv.first, o);
+        }
+        if (imgs.size()) j.set("images", imgs);
+    }
 
     // Embed every part definition used so the file opens anywhere, offline,
     // even on an install that doesn't have these parts.
@@ -499,6 +551,38 @@ bool Document::fromJson(const Json& j, std::string* err) {
         maxId = std::max(maxId, a.id);
         d.annos.push_back(a);
     }
+    // Pictures: read the bytes an image annotation refers to. The store is content
+    // addressed and immutable within a session, so entries already in memory are
+    // kept (an undo snapshot carries keys only — dropping the bytes here would blank
+    // every picture on the canvas after one undo).
+    std::map<std::string, ImageBlob> keptImages = std::move(images);
+    for (auto& kv : j["images"].members()) {
+        ImageBlob blob;
+        blob.mime = kv.second["mime"].str();
+        blob.w = std::max(1, kv.second["w"].i());
+        blob.h = std::max(1, kv.second["h"].i());
+        blob.vector = blob.mime == "image/svg+xml";
+        blob.bytes = github::base64Decode(kv.second["data"].str());
+        // Never trust a file: the bytes must be a picture we read (the declared mime only
+        // matters for TGA, which has no signature) and within the import limits.
+        if (!blob.bytes.empty()) {
+            const char* sniffed = imageMimeFromBytes(blob.bytes, blob.mime == "image/x-tga" ? "x.tga" : "");
+            if (!sniffed || !*sniffed) blob.bytes.clear();
+            else {
+                blob.mime = sniffed;
+                blob.vector = blob.mime == "image/svg+xml";
+                if (blob.bytes.size() > (blob.vector ? kMaxSvgBytes : kMaxImageBytes)) blob.bytes.clear();
+            }
+        }
+        if (blob.bytes.empty()) {
+            SDL_Log("Skipping picture '%s' (empty or damaged data)", kv.first.c_str());
+            continue;
+        }
+        std::string key = kv.first.empty() ? imageKey(blob) : kv.first;
+        if (imageKey(blob) != key) SDL_Log("Picture '%s' does not match its content key (file edited by hand?)", key.c_str());
+        d.images[key] = std::move(blob);
+    }
+    for (auto& kv : keptImages) d.images.emplace(kv.first, std::move(kv.second));
     d.nextId = std::max(j["nextId"].i(1), maxId + 1);
     d.nextGroup = j["nextGroup"].i(1);
     d.normalizeGroups();  // hand-edited files: drop single-member groups, keep runs together

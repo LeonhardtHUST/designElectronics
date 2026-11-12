@@ -48,6 +48,12 @@ void hitTests(int& failures);
 void configTests(int& failures);
 void toolTests(int& failures);
 void keyTests(int& failures);
+void textSelectionTests(int& failures);
+void inlineAnnoTests(int& failures);
+void textModeTests(int& failures);
+void shapeToolTests(int& failures);
+void imageTests(int& failures);
+void imageAnnoTests(int& failures);
 
 
 // ---- circuit-building helpers for simulation tests ----
@@ -815,6 +821,432 @@ int githubSelftest() {
     return failures ? 1 : 0;
 }
 
+void menuTests(int& failures) {
+    printf("Menu overlays\n");
+    UI ui;
+    Gfx gfx;
+    Input input;
+    ui.g = &gfx;
+    ui.in = &input;
+    int fired = 0;
+    std::vector<MenuItem> items;
+    for (int i = 0; i < 60; i++) items.push_back({"item " + std::to_string(i), "", [&] { fired++; }, {}, true, false, false});
+    input.pressSerial = 7;
+    Rect anchor{100, 680, 120, 24};
+    ui.openMenu(anchor, items);
+    Rect bounds = ui.menuBoundsForTest();
+    input.mouse = bounds.center();
+    input.pressPos = bounds.center();
+    input.released = true;
+    ui.end();
+    check(fired == 0 && ui.hasMenu(), "menu opening release cannot activate an item", failures);
+    input.released = false;
+    input.pressSerial++;
+    input.released = true;
+    ui.end();
+    check(fired == 1 && !ui.hasMenu(), "new release activates menu item", failures);
+
+    ui.openMenu(anchor, items);
+    bounds = ui.menuBoundsForTest();
+    check(bounds.b() <= 720 && bounds.y >= 0 && (bounds.x >= anchor.r() || bounds.r() <= anchor.x || bounds.y >= anchor.b() || bounds.b() <= anchor.y),
+          "tall menu stays within window and avoids anchor", failures);
+    input.released = false;
+    input.mouse = bounds.center();
+    input.wheelY = -1000;
+    ui.end();
+    check(ui.menuScrollForTest() >= 0 && ui.menuScrollForTest() <= ui.menuMaxScrollForTest(), "menu scroll is clamped", failures);
+}
+
+// ---- pictures: sniffing, limits, content keys, document storage, texture cache ----
+void imageTests(int& failures) {
+    printf("Pictures\n");
+    // A small picture, encoded in memory: the self-test carries no asset files.
+    std::vector<unsigned char> px((size_t)8 * 6 * 4);
+    for (int y = 0; y < 6; y++)
+        for (int x = 0; x < 8; x++) {
+            unsigned char* p = &px[((size_t)y * 8 + x) * 4];
+            p[0] = (unsigned char)(x * 30);
+            p[1] = (unsigned char)(y * 40);
+            p[2] = 200;
+            p[3] = ((x + y) & 1) ? 255 : 128;
+        }
+    std::string png;
+    check(imageEncodePng(px.data(), 8, 6, 4, &png) && png.size() > 8 && (unsigned char)png[1] == 'P',
+          "a PNG can be written in memory", failures);
+
+    ImageBlob small;
+    std::string err, note;
+    bool ok = imageImport(png, "swatch.png", &small, &err, &note);
+    check(ok && small.mime == "image/png" && small.w == 8 && small.h == 6 && !small.vector && small.bytes == png &&
+              note.empty(),
+          "a small PNG imports unchanged, keeping its own format and size", failures);
+
+    {   // over the 4096 px limit: scaled down and re-encoded (no alpha here -> JPEG)
+        std::vector<unsigned char> wide((size_t)5000 * 10 * 3);
+        for (size_t i = 0; i < wide.size(); i += 3) {
+            wide[i] = (unsigned char)((i * 7) % 251);
+            wide[i + 1] = (unsigned char)((i * 3) % 97);
+            wide[i + 2] = (unsigned char)((i * 11) % 31);
+        }
+        std::string widePng;
+        check(imageEncodePng(wide.data(), 5000, 10, 3, &widePng), "a 5000x10 PNG can be written in memory", failures);
+        ImageBlob scaled;
+        err.clear();
+        note.clear();
+        ok = imageImport(widePng, "wide.png", &scaled, &err, &note);
+        check(ok && scaled.w == 4096 && scaled.h == 8 && scaled.mime == "image/jpeg" && !note.empty(),
+              "a bitmap wider than 4096 px is scaled down and re-encoded", failures);
+        std::vector<uint8_t> pixels;
+        int dw = 0, dh = 0;
+        check(imageDecodeRGBA(scaled, 0, pixels, dw, dh) && dw == 4096 && dh == 8 &&
+                  pixels.size() == (size_t)dw * dh * 4,
+              "the scaled bitmap decodes back as 4096x8", failures);
+    }
+
+    {   // SVG stays vector: its own size on import, rasterized at the asked size
+        const std::string svg =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"48\" viewBox=\"0 0 64 48\">"
+            "<rect x=\"0\" y=\"0\" width=\"64\" height=\"48\" fill=\"#3366cc\"/></svg>";
+        ImageBlob vec;
+        err.clear();
+        note.clear();
+        ok = imageImport(svg, "mark.svg", &vec, &err, &note);
+        check(ok && vec.vector && vec.mime == "image/svg+xml" && vec.w == 64 && vec.h == 48 && vec.bytes == svg,
+              "an SVG imports as a vector with its viewBox size", failures);
+        std::vector<uint8_t> raster;
+        int rw = 0, rh = 0;
+        check(imageDecodeRGBA(vec, 32, raster, rw, rh) && rw == 32 && rh == 24 && raster.size() == (size_t)32 * 24 * 4 &&
+                  raster[((size_t)12 * 32 + 16) * 4 + 3] == 255,
+              "the SVG rasterizes at the requested size, opaquely", failures);
+    }
+
+    ImageBlob junk;
+    err.clear();
+    check(!imageImport("not a picture, just text", "notes.bin", &junk, &err, nullptr) && !err.empty(),
+          "bytes that are not a picture are refused with a reason", failures);
+
+    ImageBlob probe;
+    probe.bytes = "abc";
+    check(imageKey(probe) == "a9993e364706816aba3e25717850c26c9cd0d89d", "the content key is the SHA-1 of the bytes", failures);
+
+    // Document storage: pictures are content addressed, saved with the design, and
+    // kept out of undo snapshots (which only carry the reference).
+    Document d;
+    Anno pic;
+    pic.id = d.newId();
+    pic.view = BB;
+    pic.kind = AnnoKind::Image;
+    pic.a = {200, 300};
+    pic.b = {800, 600};
+    pic.image = d.addImage(small);
+    d.annos.push_back(pic);
+    check(d.addImage(small) == pic.image && d.images.size() == 1, "the same picture is stored once", failures);
+
+    const std::string snap = d.snapshot();
+    const std::string fullText = d.serialize(true);
+    const std::string payload = github::base64Encode(small.bytes);
+    check(fullText.find("\"images\"") != std::string::npos && fullText.find(payload) != std::string::npos,
+          "the saved file carries the picture bytes", failures);
+    check(snap.find("\"images\"") == std::string::npos && snap.find(payload) == std::string::npos &&
+              snap.size() + small.bytes.size() < fullText.size(),
+          "an undo snapshot keeps the reference, not the bytes", failures);
+
+    Document reloaded;
+    std::string e2;
+    bool okBack = reloaded.deserialize(fullText, &e2);
+    const ImageBlob* rt = okBack ? reloaded.image(pic.image) : nullptr;
+    check(okBack && rt && rt->bytes == small.bytes && rt->mime == "image/png" && rt->w == 8 && rt->h == 6,
+          "a picture survives save and load byte for byte", failures);
+
+    {   // a file is never trusted: bytes that are not a picture (whatever the mime says) are
+        // skipped on load, and a real picture gets the mime its bytes say, not the file's
+        Json j = Json::parse(fullText);
+        Json imgs = j["images"];
+        Json bogus = Json::object();
+        bogus.set("mime", "image/png");
+        bogus.set("w", 4);
+        bogus.set("h", 4);
+        bogus.set("data", github::base64Encode("<html>not a picture</html>"));
+        imgs.set("deadbeef", bogus);
+        Json lie = imgs[pic.image];
+        lie.set("mime", "image/svg+xml");
+        imgs.set(pic.image, lie);
+        j.set("images", imgs);
+        Document hostile;
+        std::string e4;
+        bool okHostile = hostile.deserialize(j.dump(-1), &e4);
+        const ImageBlob* real = okHostile ? hostile.image(pic.image) : nullptr;
+        check(okHostile && !hostile.image("deadbeef") && real && real->mime == "image/png" && !real->vector,
+              "a loaded file keeps only real pictures, typed by their bytes", failures);
+    }
+
+    Document restored = d;  // the undo path: deserialize a snapshot into a live document
+    std::string e3;
+    restored.deserialize(snap, &e3);
+    const ImageBlob* kept = restored.image(pic.image);
+    check(kept && kept->bytes == small.bytes, "restoring an undo snapshot keeps the pictures in memory", failures);
+
+    ImageBlob other;
+    other.mime = "image/png";
+    other.w = 8;
+    other.h = 6;
+    other.bytes = png + "different";  // a different key, referenced by nothing
+    Document pruned;                  // built in memory: the annotation still points at its key
+    pruned.annos.push_back(pic);
+    pruned.addImage(small);
+    pruned.addImage(other);
+    const size_t storeBefore = pruned.images.size();
+    const int dropped = pruned.pruneImages();
+    check(storeBefore == 2 && dropped == 1 && pruned.images.size() == 1 && pruned.image(pic.image) != nullptr,
+          "pruneImages drops the pictures nothing refers to", failures);
+
+    Document bare;
+    bare.addImage(small);
+    check(bare.serialize(true).find("\"images\"") == std::string::npos,
+          "a picture no annotation refers to is not written", failures);
+
+    ImageCache cache;  // no renderer: exactly the headless self-test situation
+    check(cache.get(small, 128) == nullptr && cache.usedBytes() == 0 && cache.renderer() == nullptr,
+          "the texture cache is a no-op without a renderer", failures);
+
+    // A 3x2 lossless WebP with one translucent pixel (generated once, embedded here).
+    const std::string webp64 = "UklGRiIAAABXRUJQVlA4TBYAAAAvAkAAEA/wj/9BHpT/AUYabnAQ0f8Q";
+    ImageBlob webp;
+    err.clear();
+    note.clear();
+    ok = imageImport(github::base64Decode(webp64), "tiny.webp", &webp, &err, &note);
+    if (!ok) printf("    webp import failed: %s\n", err.c_str());
+    check(ok && webp.mime == "image/webp" && webp.w == 3 && webp.h == 2, "a WebP imports (3x2 test vector)", failures);
+    std::vector<uint8_t> webpPixels;
+    int ww = 0, wh = 0;
+    check(imageDecodeRGBA(webp, 0, webpPixels, ww, wh) && ww == 3 && wh == 2 && webpPixels.size() == 24 &&
+              webpPixels[3] == 128,
+          "WebP pixels and alpha decode", failures);
+}
+
+// ---- pictures as annotations: model, geometry, clipboard, save and load ----
+void imageAnnoTests(int& failures) {
+    printf("Picture annotations\n");
+    // A picture to annotate, built in memory so the test needs no asset files.
+    std::vector<unsigned char> px((size_t)40 * 30 * 4);
+    for (size_t i = 0; i < px.size(); i += 4) {
+        px[i] = (unsigned char)(i % 251);
+        px[i + 1] = 120;
+        px[i + 2] = 220;
+        px[i + 3] = 255;
+    }
+    ImageBlob blob;
+    {
+        std::string png, err, note;
+        imageEncodePng(px.data(), 40, 30, 4, &png);
+        bool ok = imageImport(png, "source.png", &blob, &err, &note);
+        check(ok && blob.mime == "image/png" && blob.w == 40 && blob.h == 30, "the test picture is 40x30 PNG", failures);
+    }
+
+    Anno img;
+    img.id = 7;
+    img.view = SCH;
+    img.kind = AnnoKind::Image;
+    img.a = {100, 200};
+    img.b = {800, 600};
+    img.image = "0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c";  // just the reference; the bytes live in Document
+    img.rotation = 90;
+    img.framed = true;
+    img.fill = rgba(255, 255, 255);
+    img.widthStep = 2;
+    img.dashed = true;
+    check(std::string(annoKindKey(AnnoKind::Image)) == "image" && annoKindFromKey("image", nullptr) &&
+              annoKindFromKey(annoKindKey(AnnoKind::Image), nullptr),
+          "the picture kind has its own key", failures);
+
+    {
+        Json j = annoToJson(img);
+        Anno back;
+        bool ok = annoFromJson(j, &back);
+        check(ok && back.kind == AnnoKind::Image && back.image == img.image && std::fabs(back.rotation - 90.f) < 0.01f &&
+                  back.framed && back.fill == rgba(255, 255, 255) && back.widthStep == 2 && back.dashed &&
+                  std::fabs(back.a.x - 100) < 0.5f && std::fabs(back.b.x - 800) < 0.5f && std::fabs(back.b.y - 600) < 0.5f,
+              "an image annotation round trips through JSON (key, rotation, frame, backdrop, width)", failures);
+        // A rect reading a picture's JSON must not pick the image fields up.
+        Anno rect;
+        rect.id = 8;
+        rect.kind = AnnoKind::Rect;
+        Json rj = annoToJson(rect);
+        check(!rj.has("image") && !rj.has("rotation") && !rj.has("framed"),
+              "shapes do not write picture fields", failures);
+    }
+
+    // Moving keeps the size: b is the box size, not a second point.
+    {
+        Anno moved = img;
+        annoTranslate(moved, {100, 50});
+        check(std::fabs(moved.a.x - 200) < 0.01f && std::fabs(moved.b.x - 800) < 0.01f && std::fabs(moved.b.y - 600) < 0.01f,
+              "moving a picture keeps its size", failures);
+    }
+
+    // A quarter turn swaps the bounding box: 800x600 becomes 600 wide and 800 high.
+    {
+        Anno r = img;
+        r.rotation = 90;
+        Rect b = annoBounds(r);
+        check(std::fabs(b.w - 600) < 0.6f && std::fabs(b.h - 800) < 0.6f,
+              "a picture turned 90° swaps its bounding box", failures);
+        // …and the hit test follows the rotation: a point that is inside the unrotated box
+        // but outside the turned one must not hit, and vice versa.
+        Vec2 ctr = annoImageCenter(r);
+        bool insideTurned = annoHitTest(r, ctr + Vec2(0, 350), 1.f);   // 350 down: inside after the turn
+        bool outsideTurned = annoHitTest(r, ctr + Vec2(350, 0), 1.f);  // 350 right: outside after the turn
+        check(insideTurned && !outsideTurned && annoHitTest(r, ctr, 1.f),
+              "hits follow the rotation (only what is on the picture counts)", failures);
+        // The bounding box of the unrotated picture still contains that point, so this is a
+        // real difference between the two hit tests and not a tautology.
+        Anno r0 = img;
+        r0.rotation = 0;
+        check(annoHitTest(r0, ctr + Vec2(350, 0), 1.f), "the unrotated picture covers the same point", failures);
+    }
+
+    // Shift (keepRatio) holds the proportions while a corner is dragged; the opposite
+    // corner stays put in the world.
+    {
+        Anno a = img;
+        a.rotation = 0;
+        a.a = {0, 0};
+        a.b = {800, 400};  // 2:1
+        Vec2 fixedCorner = annoImageCorner(a, 0);  // top-left, opposite the dragged one
+        annoMoveHandle(a, 2, {1600, 500}, 800.f / 400.f, false);  // bottom-right, Shift
+        check(std::fabs(a.b.x / a.b.y - 2.f) < 0.01f && std::fabs(a.b.x - 1600) < 0.6f && std::fabs(a.b.y - 800) < 0.6f,
+              "Shift keeps a picture's proportions while scaling", failures);
+        check(std::fabs(dist(annoImageCorner(a, 0), fixedCorner)) < 0.6f, "the opposite corner stays put", failures);
+        // Without Shift the same drag is free: 1600x500 stays 3.2:1.
+        Anno free = img;
+        free.rotation = 0;
+        free.a = {0, 0};
+        free.b = {800, 400};
+        annoMoveHandle(free, 2, {1600, 500});
+        check(std::fabs(free.b.x - 1600) < 0.6f && std::fabs(free.b.y - 500) < 0.6f,
+              "without Shift a picture's handles scale freely", failures);
+        // …and neither drag can collapse the picture under kImageMinSide.
+        Anno tiny = img;
+        tiny.rotation = 0;
+        tiny.a = {0, 0};
+        tiny.b = {800, 400};
+        annoMoveHandle(tiny, 2, {1, 1});
+        check(tiny.b.x >= kImageMinSide - 0.01f && tiny.b.y >= kImageMinSide - 0.01f, "a picture cannot be dragged away to nothing", failures);
+    }
+
+    // The rotation handle: straight up means 0°, to the right 90°, and Shift steps 15°.
+    {
+        Anno a = img;
+        a.rotation = 0;
+        a.a = {0, 0};
+        a.b = {800, 600};
+        Vec2 c = annoImageCenter(a);
+        annoMoveHandle(a, kAnnoRotateHandle, c + Vec2(0, -500));
+        check(std::fabs(a.rotation) < 0.01f, "the rotation handle straight up means 0°", failures);
+        annoMoveHandle(a, kAnnoRotateHandle, c + Vec2(500, 0));
+        check(std::fabs(a.rotation - 90.f) < 0.01f, "dragging the rotation handle to the right turns 90°", failures);
+        annoMoveHandle(a, kAnnoRotateHandle, c + Vec2(150, -500), 0.f, true);  // ~16.7° -> snapped
+        check(std::fabs(a.rotation - 15.f) < 0.01f, "Shift snaps the rotation to 15° steps", failures);
+        annoMoveHandle(a, kAnnoRotateHandle, c + Vec2(150, -500), 0.f, false);  // no snap: 16.7°
+        check(std::fabs(a.rotation - 16.7f) < 0.2f, "without Shift the rotation stays where the pointer is", failures);
+        // The handle is drawn above the top edge and follows the rotation.
+        Anno up = img;
+        up.rotation = 0;
+        up.a = {0, 0};
+        up.b = {800, 600};
+        check(annoRotateHandleAt(up, 100).x > 399.9f && annoRotateHandleAt(up, 100).x < 400.1f &&
+                  annoRotateHandleAt(up, 100).y < 0,
+              "the rotation handle sits above the top edge", failures);
+        up.rotation = 90;
+        Vec2 turned = annoRotateHandleAt(up, 100);
+        check(turned.x > 499.9f && std::fabs(turned.y - 300) < 0.2f, "the rotation handle follows the rotation", failures);
+    }
+
+    // The internal clipboard: copySelection puts the referenced pictures into the JSON,
+    // and paste merges them into the content-addressed store (idempotently).
+    {
+        Document doc;
+        Anno a1;
+        a1.id = doc.newId();
+        a1.view = SCH;
+        a1.kind = AnnoKind::Image;
+        a1.a = {0, 0};
+        a1.b = {800, 600};
+        a1.image = doc.addImage(blob);
+        doc.annos.push_back(a1);
+        Document clip;  // what copySelection() builds: the markup plus the pictures it uses
+        clip.annos.push_back(a1);
+        if (const ImageBlob* b = doc.image(a1.image)) clip.images.emplace(a1.image, *b);
+        const std::string text = clip.toJson(false, true).dump(-1);
+        check(text.find("\"images\"") != std::string::npos && text.find("\"library\"") == std::string::npos,
+              "the clipboard carries the picture without the part library", failures);
+
+        Document pasted;
+        std::string err;
+        bool okPaste = pasted.deserialize(text, &err);
+        check(okPaste && pasted.annos.size() == 1 && pasted.image(a1.image) && pasted.image(a1.image)->bytes == blob.bytes,
+              "the pasted clipboard has the picture bytes", failures);
+
+        Document target;  // what App::paste does: merge the pictures, add copies of the markup
+        for (auto& kv : pasted.images) target.images.emplace(kv.first, kv.second);
+        for (auto& at : pasted.annos) {
+            Anno n = at;
+            n.id = target.newId();
+            target.annos.push_back(n);
+        }
+        check(target.image(a1.image) != nullptr && target.annos.size() == 1 &&
+                  target.annos.front().image == a1.image,
+              "the pasted annotation points at a picture the document now holds", failures);
+
+        // Undo restores a snapshot (keys only); the store must survive it, so redo shows
+        // the picture again.
+        const std::string snap = target.snapshot();
+        check(snap.find("\"images\"") == std::string::npos && snap.find(github::base64Encode(blob.bytes)) == std::string::npos,
+              "an undo snapshot carries the reference, not the picture bytes", failures);
+        Document undone = target;
+        undone.deserialize(snap, &err);
+        const ImageBlob* afterUndo = undone.image(a1.image);
+        check(afterUndo && afterUndo->bytes == blob.bytes && undone.annos.size() == 1,
+              "undoing and redoing keeps the pasted picture", failures);
+
+        // Save → load keeps mime, size and bytes.
+        const std::string saved = target.serialize(true);
+        Document reloaded;
+        bool okLoad = reloaded.deserialize(saved, &err);
+        const ImageBlob* back = okLoad ? reloaded.image(a1.image) : nullptr;
+        check(okLoad && back && back->mime == "image/png" && back->w == 40 && back->h == 30 && back->bytes == blob.bytes,
+              "a picture annotation saves and loads with its mime, size and bytes", failures);
+    }
+
+    // The insert path shared by the menu, a dropped file and the clipboard: it stores the
+    // picture, sizes the annotation from the pixels and makes one undo step.
+    {
+        App app;
+        app.ui.g = &app.g;
+        app.ui.in = &app.in;
+        app.ui.s = 1;
+        app.view = SCH;
+        app.cam[SCH].zoom = 1;
+        app.cam[SCH].pan = {0, 0};
+        app.rCanvas = {0, 0, 800, 600};
+        Anno* made = app.addImageAnno(blob);
+        const std::string key = imageKey(blob);
+        check(made && made->kind == AnnoKind::Image && made->image == key && app.doc.image(key) &&
+                  app.doc.annos.size() == 1 && app.selAnnos.size() == 1 && app.undoStack.size() == 1,
+              "inserting a picture makes one annotation, one undo step, and selects it", failures);
+        // 40x30 px at 12 world units per px is 480x360, which fits the 60% cap here.
+        check(made && std::fabs(made->b.x - 480.f) < 0.6f && std::fabs(made->b.y - 360.f) < 0.6f &&
+                  made->framed == false && made->fill == 0,
+              "a new picture is sized from its pixels and has no frame or backdrop", failures);
+        // The same bytes twice share one store entry.
+        app.addImageAnno(blob);
+        check(app.doc.images.size() == 1 && app.doc.annos.size() == 2, "the same picture is stored once", failures);
+        // Garbage bytes are refused by the same path (and toast instead of throwing).
+        check(!app.insertImageBytes("not a picture at all", "junk.bin"), "the insert path refuses bytes that are not a picture", failures);
+        check(app.doc.annos.size() == 2 && app.doc.images.size() == 1, "a failed import adds nothing", failures);
+    }
+}
+
 int selftest() {
     int failures = 0;
     // The assertions below match the English source strings, so pin the language.
@@ -927,8 +1359,15 @@ int selftest() {
     annoTests(failures);
     hierarchyTests(failures);
     hitTests(failures);
+    textSelectionTests(failures);
+    inlineAnnoTests(failures);
+    textModeTests(failures);
+    menuTests(failures);
     configTests(failures);
     toolTests(failures);
+    shapeToolTests(failures);
+    imageTests(failures);
+    imageAnnoTests(failures);
     keyTests(failures);
     tidyTests(failures);
     videoTests(failures);
@@ -958,6 +1397,7 @@ void annoTests(int& failures) {
     text.id = d.newId(); text.view = SCH; text.kind = AnnoKind::Text; text.a = {100, 100};
     annoSetText(text, "hello\nworld");
     text.hidden = true;
+    text.font = FONT_MONO;
     d.annos = {rect, line, circ, text};
 
     std::string full = d.serialize(true), compact = d.compactJson(), err;
@@ -975,8 +1415,8 @@ void annoTests(int& failures) {
     check(r2 && r2->kind == AnnoKind::Rect && r2->view == BB && std::fabs(r2->a.x - 100) < 0.6f && std::fabs(r2->b.y - 900) < 0.6f &&
               l2 && l2->view == SCH && !l2->dashed && l2->stroke == rgba(60, 60, 64) &&
               c2 && c2->view == PCB && std::fabs(dist(c2->a, c2->b) - 600) < 0.6f &&
-              t2 && t2->hidden && t2->text == "hello\nworld" && t2->b.y > 0,
-          "each kind keeps its geometry, view, style and text", failures);
+              t2 && t2->hidden && t2->text == "hello\nworld" && t2->b.y > 0 && t2->font == FONT_MONO && r2->font == FONT_UI,
+          "each kind keeps its geometry, view, style, text and font", failures);
 
     {   // an annotation kind from a newer build is skipped, the rest still load
         Json j = Json::parse(full);
@@ -1039,12 +1479,38 @@ void annoTests(int& failures) {
               "a rectangle has four corner handles and the opposite corner stays", failures);
         check(annoBounds(circ).w >= 1199.f && std::fabs(annoBounds(circ).center().x - 2000) < 1.f, "bounds follow the shape", failures);
     }
+    {   // text keeps its size when moved; its resize handle sits on the bottom-right corner
+        Anno t = text;
+        t.a = {500, 700};
+        t.b = {1800, 160};
+        Anno moved = t;
+        annoTranslate(moved, {-900, 400});
+        Anno r = rect;
+        annoTranslate(r, {50, -50});
+        Vec2 corner = annoHandleAt(t, 1);
+        check(std::fabs(moved.a.x - (-400)) < 0.5f && std::fabs(moved.a.y - 1100) < 0.5f && std::fabs(moved.b.x - 1800) < 0.5f &&
+                  std::fabs(moved.b.y - 160) < 0.5f && std::fabs(r.b.x - (rect.b.x + 50)) < 0.5f,
+              "moving a text annotation keeps its box size (other shapes still move both points)", failures);
+        check(std::fabs(corner.x - 2300) < 0.5f && std::fabs(corner.y - 860) < 0.5f,
+              "a text annotation's resize handle is on its bottom-right corner", failures);
+    }
     {   // moving and resizing an annotation is undoable like any other edit
         check(annoKindFromKey(annoKindKey(AnnoKind::Text), nullptr) && !annoKindFromKey("arrow", nullptr),
               "annotation kinds round trip through their key", failures);
         Anno t = text;
+        Vec2 boxBefore = t.b;
         annoBumpTextSize(t, 40);
-        check(t.textSize > kNoteTextSize && t.b.y > text.b.y, "text size and box grow together", failures);
+        check(t.textSize > kNoteTextSize && t.b.x == boxBefore.x && t.b.y == boxBefore.y,
+              "a text box keeps its frame when its text size grows", failures);
+        // A point text is the opposite: it has no frame, so bigger glyphs make a bigger box.
+        Gfx gfx;
+        Anno pt = text;
+        pt.pointText = true;
+        annoFitText(pt, gfx);
+        Vec2 pointBefore = pt.b;
+        annoBumpTextSize(pt, 40);
+        annoFitText(pt, gfx);
+        check(pt.b.x > pointBefore.x && pt.b.y > pointBefore.y, "a point text grows with its text size", failures);
     }
 }
 
@@ -1126,6 +1592,357 @@ void hierarchyTests(int& failures) {
     }
 }
 
+// ---- text field selection: focus, keyboard, mouse, all on UTF-8 code-point boundaries ----
+void textSelectionTests(int& failures) {
+    printf("Text field selection\n");
+    UI ui;
+    Gfx gfx;
+    Input input;
+    ui.g = &gfx;
+    ui.in = &input;
+    std::string value = u8"a中b";
+    Rect box{0, 0, 300, 80};
+    ui.focusField("selection", true);
+    ui.textField("selection", box, value, "", true);
+    check(ui.fieldFocused("selection"), "focusField focuses requested text field", failures);
+    input.text = "replacement";
+    ui.textField("selection", box, value, "", true);
+    check(value == "replacement", "typing replaces programmatically selected text", failures);
+    input.endFrame();
+    input.mods = SDL_KMOD_CTRL;
+    input.keys = {SDLK_A};
+    ui.textField("selection", box, value, "", true);
+    input.endFrame();
+    input.mods = 0;
+    input.keys = {SDLK_BACKSPACE};
+    ui.textField("selection", box, value, "", true);
+    check(value.empty(), "Backspace deletes full selected range", failures);
+    input.endFrame();
+    value = u8"a中b";
+    ui.focusField("area", false);
+    ui.textArea("area", box, value);
+    input.mods = SDL_KMOD_SHIFT;
+    input.keys = {SDLK_LEFT, SDLK_LEFT};
+    ui.textArea("area", box, value);
+    input.endFrame();
+    input.mods = 0;
+    input.keys = {SDLK_DELETE};
+    ui.textArea("area", box, value);
+    check(value == "a", "Shift arrows and Delete preserve UTF-8 boundaries", failures);
+    ui.clearFocus();
+    check(!ui.fieldFocused("area"), "clearFocus clears field focus", failures);
+    value = u8"a中b";
+    input.mouse = {1, 35}; input.pressed = true; input.down = true;
+    ui.textField("click", box, value, "", true);
+    input.endFrame(); input.pressed = false; input.down = false;
+    input.mouse = {20, 35}; input.pressed = true; input.doubleClick = true; input.down = true;
+    ui.textField("click", box, value, "", true);
+    input.endFrame(); input.pressed = false; input.down = false;
+    input.keys = {SDLK_BACKSPACE};
+    ui.textField("click", box, value, "", true);
+    // "a中b" has no word break, so the double-click selects all of it (on code-point boundaries)
+    check(value.empty(), "mouse click and double-click selection stay at UTF-8 boundaries", failures);
+    ui.clearFocus(); input.endFrame();
+    // Click positions from the real glyph widths: inside the field the text starts at x = 8 (inset).
+    const float px = 14.f, x0 = 8.f, wa = gfx.textWidth("a", px), wz = gfx.textWidth(u8"中", px);
+    printf("  glyph widths: a %.1f, 中 %.1f\n", wa, wz);
+    auto clickThenBackspace = [&](const char* id, float x) {
+        std::string v = u8"a中b";
+        input.endFrame();
+        input.mouse = {x, 35}; input.pressPos = input.mouse; input.pressed = true; input.down = true;
+        ui.textField(id, box, v, "", true);
+        input.endFrame(); input.down = false; input.released = true;
+        ui.textField(id, box, v, "", true);
+        input.endFrame();
+        input.keys = {SDLK_BACKSPACE};
+        ui.textField(id, box, v, "", true);
+        input.endFrame();
+        ui.clearFocus();
+        return v;
+    };
+    if (wa > 0 && wz > 0) {
+        std::string left = clickThenBackspace("left-half", x0 + wa + wz * 0.25f);
+        std::string right = clickThenBackspace("right-half", x0 + wa + wz * 0.75f);
+        printf("  backspace after a click on the left half of 中 -> \"%s\", right half -> \"%s\"\n", left.c_str(), right.c_str());
+        check(left == u8"中b", "clicking left half positions at a UTF-8 boundary", failures);
+        check(right == u8"ab", "clicking right half positions at a UTF-8 boundary", failures);
+    } else {
+        printf("  (no font metrics: click positioning not checked)\n");
+    }
+    {   // a click far past the end of a long, scrolled text puts the caret at its end
+        std::string v(1200, 'x');
+        input.endFrame();
+        input.mouse = {290, 35}; input.pressPos = input.mouse; input.pressed = true; input.down = true;
+        ui.textField("long-tail", box, v, "", true);
+        input.endFrame(); input.down = false;
+        input.keys = {SDLK_BACKSPACE};
+        ui.textField("long-tail", box, v, "", true);
+        bool focused = ui.fieldFocused("long-tail");
+        input.endFrame();
+        ui.clearFocus();
+        check(focused && v.size() <= 1200 && v.find_first_not_of('x') == std::string::npos,
+              "clicking near long-text tail keeps focus without overflow", failures);
+    }
+}
+
+void inlineAnnoTests(int& failures) {
+    printf("Inline annotation editing\n");
+    App app;
+    app.ui.g = &app.g;
+    app.ui.in = &app.in;
+    app.ui.s = 1;
+    app.view = SCH;
+    app.cam[SCH].zoom = 1;
+    app.cam[SCH].pan = {0, 0};
+    app.rCanvas = {0, 0, 800, 600};
+    Anno anno;
+    anno.id = app.doc.newId();
+    anno.view = SCH;
+    anno.kind = AnnoKind::Text;
+    anno.a = {50, 50};
+    annoSetText(anno, "placeholder");
+    app.doc.annos.push_back(anno);
+    app.pressHit.kind = Hit::ANNO;
+    app.pressHit.anno = anno.id;
+    app.drag = DRAG_PENDING;
+    app.in.doubleClick = true;
+    app.finishPointer();
+    check(app.inlineAnnoEdit == anno.id, "double-click text annotation starts inline editing", failures);
+    app.in.endFrame();
+    app.drawInlineAnnoEditor();
+    check(app.ui.fieldFocused("annoinline" + std::to_string(anno.id)), "inline editor receives field focus", failures);
+    app.in.text = "first";
+    app.drawInlineAnnoEditor();
+    check(app.doc.anno(anno.id)->text == "first", "inline typing replaces fully selected placeholder", failures);
+    app.in.endFrame();
+    app.in.text = " second";
+    app.drawInlineAnnoEditor();
+    check(app.doc.anno(anno.id)->text == "first second" && app.undoStack.size() == 1, "live inline edits share one undo checkpoint", failures);
+    app.in.endFrame();
+    app.in.keys = {SDLK_RETURN};
+    app.drawInlineAnnoEditor();
+    check(app.inlineAnnoEdit < 0 && app.doc.anno(anno.id)->text == "first second", "Enter commits and closes inline editing", failures);
+    app.in.endFrame();
+    app.undo();
+    check(app.doc.anno(anno.id)->text == "placeholder", "single undo restores text before inline session", failures);
+    auto undoBefore = app.undoStack;
+    auto redoBefore = app.redoStack;
+    app.beginInlineAnnoEdit(anno.id);
+    app.drawInlineAnnoEditor();
+    app.in.text = "cancelled";
+    app.drawInlineAnnoEditor();
+    app.in.endFrame();
+    app.in.keys = {SDLK_ESCAPE};
+    app.drawInlineAnnoEditor();
+    check(app.inlineAnnoEdit < 0 && app.doc.anno(anno.id)->text == "placeholder" && app.undoStack == undoBefore && app.redoStack == redoBefore, "Escape restores original annotation and undo history", failures);
+    app.in.endFrame();
+    app.readOnly = true;
+    app.beginInlineAnnoEdit(anno.id);
+    check(app.inlineAnnoEdit < 0, "read-only canvas cannot start inline editing", failures);
+    app.readOnly = false;
+    app.beginInlineAnnoEdit(anno.id);
+    app.drawInlineAnnoEditor();
+    app.in.pressed = true;
+    app.in.mouse = {790, 590};
+    app.drawInlineAnnoEditor();
+    check(app.inlineAnnoEdit < 0, "clicking outside commits and closes inline editing", failures);
+    app.in.endFrame();
+    app.beginInlineAnnoEdit(anno.id);
+    app.view = PCB;
+    app.drawInlineAnnoEditor();
+    check(app.inlineAnnoEdit < 0, "view change closes inline editing", failures);
+    app.view = SCH;
+    app.in.mouse = {80, 80};
+    app.in.pressPos = app.in.mouse;
+    app.in.down = app.in.pressed = app.in.doubleClick = true;
+    app.canvasInput();
+    check(app.inlineAnnoEdit == anno.id && !app.canvasOwnsPointer, "double-click down frame enters editor without a canvas drag", failures);
+    app.drawInlineAnnoEditor();
+    app.in.endFrame();
+    app.in.text = "down-frame replacement";
+    app.drawInlineAnnoEditor();
+    check(app.doc.anno(anno.id)->text == "down-frame replacement", "double-click down frame preserves full initial selection", failures);
+    app.in.endFrame();
+    app.in.down = false;
+    app.in.pressed = true;
+    app.in.mouse = {80, 80};
+    app.canvasInput();
+    check(app.drag == DRAG_NONE && !app.canvasOwnsPointer, "inline editor pointer input cannot start canvas dragging", failures);
+    app.in.endFrame();
+    app.undo();
+    app.drawInlineAnnoEditor();
+    check(app.inlineAnnoEdit < 0 && app.doc.anno(anno.id)->text == "placeholder", "external undo closes stale inline session without rewriting text", failures);
+    app.beginInlineAnnoEdit(anno.id);
+    app.doc.removeAnno(anno.id);
+    app.drawInlineAnnoEditor();
+    check(app.inlineAnnoEdit < 0, "deleted annotation closes inline editor", failures);
+}
+
+// ---- point text vs text box: bounds that follow the glyphs, and a frame the user owns ----
+void textModeTests(int& failures) {
+    printf("Point text and text boxes\n");
+    Gfx gfx;  // no fonts loaded: textWidth falls back to a deterministic estimate
+
+    Anno point;
+    point.id = 1;
+    point.view = SCH;
+    point.kind = AnnoKind::Text;
+    point.a = {100, 200};
+    point.pointText = true;
+    annoSetText(point, "hello\nworlds");
+    annoFitText(point, gfx);
+    const float pad = kPointTextPad * point.textSize;
+    const float longest = std::max(gfx.textWidth("hello", point.textSize, point.font),
+                                   gfx.textWidth("worlds", point.textSize, point.font));
+    check(std::fabs(point.b.x - (longest + 2 * pad)) < 0.01f, "point text width is its longest line plus the padding", failures);
+    check(std::fabs(point.b.y - (2 * 1.35f * point.textSize + 2 * pad)) < 0.01f, "point text height is its line count plus the padding", failures);
+
+    // No wrapping: a point text keeps the lines exactly as typed, however long they are.
+    Anno longLine = point;
+    annoSetText(longLine, "one line far wider than any box a user would draw around this note");
+    annoFitText(longLine, gfx);
+    check(std::fabs(longLine.b.y - (1.35f * longLine.textSize + 2 * kPointTextPad * longLine.textSize)) < 0.01f,
+          "point text never wraps, so its height stays one line", failures);
+
+    // Editing the text and changing the size both move the bounds.
+    const Vec2 beforeEdit = point.b;
+    annoSetText(point, "hello\nworlds\nthird line");
+    annoFitText(point, gfx);
+    check(point.b.y > beforeEdit.y + 1 && point.b.x >= beforeEdit.x, "editing a point text updates its bounds", failures);
+    const Vec2 beforeSize = point.b;
+    point.textSize = 54.f;
+    annoFitText(point, gfx);
+    check(point.b.y < beforeSize.y * 0.6f && point.b.x < beforeSize.x, "a smaller point text gets a smaller box", failures);
+    point.textSize = kNoteTextSize;
+    annoFitText(point, gfx);
+
+    // A text box owns its size: neither the text nor the size moves its frame.
+    Anno box;
+    box.id = 2;
+    box.view = SCH;
+    box.kind = AnnoKind::Text;
+    box.a = {0, 0};
+    box.b = {1800, 400};
+    annoSetText(box, "one");
+    const Vec2 frame = box.b;
+    annoSetText(box, "one\ntwo\nthree\nfour");
+    check(box.b.x == frame.x && box.b.y == frame.y, "a text box keeps its size when the text changes", failures);
+    annoBumpTextSize(box, 8);
+    check(box.b.x == frame.x && box.b.y == frame.y && box.textSize > kNoteTextSize, "a text box keeps its frame when its text grows", failures);
+
+    // JSON: "point" is written only for point text; a file without it reads as a text box.
+    Json pointJson = annoToJson(point);
+    check(pointJson["point"].boolean(false), "point text saves its point flag", failures);
+    Anno pointBack;
+    check(annoFromJson(pointJson, &pointBack) && pointBack.pointText &&
+              std::fabs(pointBack.b.x - point.b.x) < 0.01f && std::fabs(pointBack.b.y - point.b.y) < 0.01f,
+          "point text round-trips through JSON", failures);
+    Json boxJson = annoToJson(box);
+    check(!boxJson["point"].boolean(false), "a text box writes no point flag", failures);
+    Anno boxBack;
+    check(annoFromJson(boxJson, &boxBack) && !boxBack.pointText, "a text box round-trips as a text box", failures);
+    Json legacy = Json::object();
+    legacy.set("id", 3);
+    legacy.set("view", viewKey(SCH));
+    legacy.set("kind", "text");
+    Json legacyA = Json::array(), legacyB = Json::array();
+    legacyA.push(Json(10.0)); legacyA.push(Json(20.0));
+    legacyB.push(Json(1500.0)); legacyB.push(Json(300.0));
+    legacy.set("a", legacyA);
+    legacy.set("b", legacyB);
+    legacy.set("text", "older note");
+    Anno legacyBack;
+    check(annoFromJson(legacy, &legacyBack) && !legacyBack.pointText &&
+              std::fabs(legacyBack.b.x - 1500.f) < 0.01f && std::fabs(legacyBack.b.y - 300.f) < 0.01f,
+          "older text annotations load as text boxes", failures);
+
+    // ---- the text tool: click makes point text, drag makes a text box ----
+    App app;
+    app.ui.g = &app.g;
+    app.ui.in = &app.in;
+    app.ui.s = 1;
+    app.view = SCH;
+    app.cam[SCH].zoom = 1;
+    app.cam[SCH].pan = {0, 0};
+    app.cam[SCH].valid = true;
+    app.rCanvas = {0, 0, 800, 600};
+
+    app.setTool(TOOL_TEXT);
+    app.in.mouse = {100, 100};
+    app.in.pressed = true;
+    app.in.down = true;
+    app.canvasInput();
+    check(app.annoDrawing && app.canvasOwnsPointer, "text tool press starts sizing a text", failures);
+    app.in.endFrame();
+    app.in.mouse = {102, 101};
+    app.in.down = false;
+    app.in.released = true;
+    app.canvasInput();
+    app.in.endFrame();
+    const int pointId = app.doc.annos.empty() ? -1 : app.doc.annos.back().id;
+    const Anno* madePoint = app.doc.anno(pointId);
+    check(madePoint && madePoint->kind == AnnoKind::Text && madePoint->pointText, "a click with the text tool makes point text", failures);
+    check(madePoint && std::fabs(madePoint->a.x - 100) < 0.01f && std::fabs(madePoint->a.y - 100) < 0.01f, "the point text lands where it was clicked", failures);
+    check(app.inlineAnnoEdit == pointId && app.tool == TOOL_SELECT, "a new point text opens for typing straight away", failures);
+    // The in-place editor grows with what is typed.
+    app.in.text = "a";
+    app.drawInlineAnnoEditor();
+    app.in.endFrame();
+    const float narrow = app.inlineAnnoRect().w;
+    app.in.text = " and then a good deal more text";
+    app.drawInlineAnnoEditor();
+    app.in.endFrame();
+    check(app.inlineAnnoRect().w > narrow + 20, "the point text editor grows with its content", failures);
+    app.finishInlineAnnoEdit();
+
+    app.setTool(TOOL_TEXT);
+    app.in.mouse = {200, 150};
+    app.in.pressed = true;
+    app.in.down = true;
+    app.canvasInput();
+    app.in.endFrame();
+    app.in.mouse = {700, 400};
+    app.canvasInput();  // dragging: the dashed preview follows the pointer
+    app.in.endFrame();
+    app.in.released = true;
+    app.in.down = false;
+    app.canvasInput();
+    app.in.endFrame();
+    const Anno* madeBox = app.doc.annos.empty() ? nullptr : &app.doc.annos.back();
+    check(madeBox && madeBox->kind == AnnoKind::Text && !madeBox->pointText, "dragging with the text tool makes a text box", failures);
+    check(madeBox && std::fabs(madeBox->b.x - 500) < 0.01f && std::fabs(madeBox->b.y - 250) < 0.01f, "the text box gets the dragged size", failures);
+    check(app.inlineAnnoEdit == (madeBox ? madeBox->id : -1), "a new text box opens for typing straight away", failures);
+    check(madeBox && std::fabs(app.inlineAnnoRect().w - 500) < 1.f, "the text box editor uses the frame size", failures);
+    app.finishInlineAnnoEdit();
+
+    // ---- point text has no frame: its corner handle scales the glyphs proportionally ----
+    Anno scaled;
+    scaled.id = 9;
+    scaled.view = SCH;
+    scaled.kind = AnnoKind::Text;
+    scaled.a = {0, 0};
+    scaled.pointText = true;
+    annoSetText(scaled, "scale me");
+    annoFitText(scaled, gfx);
+    const float sizeBefore = scaled.textSize;
+    const Vec2 corner = annoHandleAt(scaled, 1);
+    check(std::fabs(corner.x - scaled.b.x) < 0.01f && std::fabs(corner.y - scaled.b.y) < 0.01f, "the point text corner handle sits on the fitted corner", failures);
+    annoMoveHandle(scaled, 1, Vec2(corner.x * 1.5f, corner.y * 1.5f));
+    check(std::fabs(scaled.textSize - sizeBefore * 1.5f) < 0.5f, "dragging a point text corner scales its text size proportionally", failures);
+    annoFitText(scaled, gfx);
+    check(std::fabs(scaled.b.x - corner.x * 1.5f) < 2.f && std::fabs(scaled.b.y - corner.y * 1.5f) < 2.f,
+          "the point text box follows the scaled text", failures);
+    check(annoHitTest(scaled, {scaled.a.x + scaled.b.x - 1, scaled.a.y + scaled.b.y / 2}, 0), "the fitted point text box is its hit box", failures);
+    // A text box corner still resizes the frame, never below the minimum.
+    Anno smallBox;
+    smallBox.kind = AnnoKind::Text;
+    smallBox.a = {0, 0};
+    smallBox.b = {1800, 400};
+    annoMoveHandle(smallBox, 1, Vec2(40, 30));
+    check(std::fabs(smallBox.b.x - kTextBoxMinW) < 0.01f && std::fabs(smallBox.b.y - kTextBoxMinH) < 0.01f,
+          "a text box never shrinks below its minimum size", failures);
+}
+
 // ---- pointer hit priority, left/middle button semantics, the red "unconnected" dot ----
 void hitTests(int& failures) {
     printf("Pointer hit priority\n");
@@ -1194,6 +2011,34 @@ void hitTests(int& failures) {
         check(handle.kind == Hit::ANNO_HANDLE && plain.kind != Hit::ANNO_HANDLE,
               "the resize handle is grabbable only once the annotation is selected", failures);
         app.selAnnos.clear();
+    }
+    {   // a text label on a breadboard is clicked, not the breadboard (nor its holes) under it
+        App b;
+        b.ui.s = 1.f;
+        b.view = BB;
+        b.cam[BB].zoom = 1.f;
+        b.cam[BB].pan = Vec2(0, 0);
+        b.cam[BB].valid = true;
+        const int bbId = b.doc.addPart("breadboard", {{"size", "half+"}}, {0, 0}).id;
+        const Vec2 hole = b.doc.part(bbId)->pinPos(0, BB);
+        Anno t;
+        t.id = b.doc.newId();
+        t.view = BB;
+        t.kind = AnnoKind::Text;
+        t.text = "label";
+        t.a = hole - Vec2(200, 60);
+        t.b = Vec2(800, 120);
+        b.doc.annos.push_back(t);
+        Hit onHole = b.hitTest(b.toScreen(hole));
+        Hit onBody = b.hitTest(b.toScreen(t.a + Vec2(20, 20)));
+        b.doc.annos.clear();
+        Hit holeAlone = b.hitTest(b.toScreen(hole));
+        printf("  text on breadboard: on a hole -> %d, off the holes -> %d, text removed -> %d\n", (int)onHole.kind,
+              (int)onBody.kind, (int)holeAlone.kind);
+        check(onHole.kind == Hit::ANNO && onHole.anno == t.id && onBody.kind == Hit::ANNO && onBody.anno == t.id,
+              "a text label on a breadboard is hit instead of the breadboard and its holes", failures);
+        check(holeAlone.kind == Hit::PIN && holeAlone.part == bbId, "without markup the breadboard hole is hit as before",
+              failures);
     }
 
     {   // middle button: bend in on a segment, bend out on a bend, pan elsewhere
@@ -1507,6 +2352,210 @@ void toolTests(int& failures) {
         RouteResult r = autoroute(c.doc, conn, true);
         printf("  autoroute: %d routed, %d failed, memory unchanged %d\n", r.routed, r.failed, (int)(c.wireColorMem[PCB] == memBefore));
         check(c.wireColorMem[PCB] == memBefore, "the autorouter never touches the remembered colour", failures);
+    }
+}
+
+// ---- shape stroke widths, and grabbing existing markup with a drawing tool ----
+void shapeToolTests(int& failures) {
+    printf("Shape widths and grabbing\n");
+    {   // every width step survives the file, and out-of-range values are clamped
+        bool roundTrip = true;
+        for (int k = 0; k <= 3; k++) {
+            Anno a;
+            a.id = 7;
+            a.kind = AnnoKind::Rect;
+            a.widthStep = k;
+            Anno back;
+            if (!annoFromJson(annoToJson(a), &back) || back.widthStep != k) roundTrip = false;
+        }
+        Anno a;
+        a.id = 7;
+        a.kind = AnnoKind::Line;
+        Json j = annoToJson(a);
+        Anno high, low;
+        j.set("widthStep", 9);
+        bool clamped = annoFromJson(j, &high) && high.widthStep == 3;
+        j.set("widthStep", -4);
+        clamped = annoFromJson(j, &low) && low.widthStep == 0 && clamped;
+        printf("  widthStep: round trip %s, clamped %s\n", roundTrip ? "ok" : "FAILED", clamped ? "ok" : "FAILED");
+        check(roundTrip, "all four stroke-width steps survive save and load", failures);
+        check(clamped, "an out-of-range width step is clamped to 0..3", failures);
+    }
+    {   // the stroke grows with the step, and the thin step stays the old 2 px
+        Anno a;
+        bool grows = true;
+        float prev = 0;
+        for (int k = 0; k <= 3; k++) {
+            a.widthStep = k;
+            float px = annoStrokePx(a, 1.f);
+            if (px <= prev) grows = false;
+            prev = px;
+        }
+        a.widthStep = 0;
+        bool thin = std::fabs(annoStrokePx(a, 1.f) - 2.f) < 1e-4f && std::fabs(annoStrokePx(a, 2.f) - 4.f) < 1e-4f;
+        a.widthStep = 3;
+        float heavy = annoStrokePx(a, 1.f);
+        printf("  stroke px: thin 2, extra thick %.1f, grows %s\n", (double)heavy, grows ? "yes" : "no");
+        check(grows && heavy > 4.f, "a heavier step draws a wider stroke", failures);
+        check(thin, "the thin step is the old 2 px stroke, scaled by the interface", failures);
+    }
+    auto setup = [](App& app) {
+        app.ui.s = 1.f;
+        app.view = SCH;
+        app.cam[SCH].zoom = 1.f;
+        app.cam[SCH].pan = Vec2(0, 0);
+        app.cam[SCH].valid = true;
+        app.rCanvas = Rect(0, 0, 800, 600);  // the canvas covers the whole test window
+        app.snapToGrid = false;
+    };
+    {   // 8 px outside a rectangle's stroke: the press grabs that shape, it draws nothing
+        App app;
+        setup(app);
+        Anno r;
+        r.id = app.doc.newId();
+        r.view = SCH;
+        r.kind = AnnoKind::Rect;
+        r.a = {100, 100};
+        r.b = {500, 300};
+        app.doc.annos.push_back(r);
+        app.setTool(TOOL_RECT);
+        Vec2 press = app.toScreen(Vec2(300, 92));  // 8 px above the top edge
+        app.in.mouse = press;
+        app.in.pressPos = press;
+        app.in.pressed = true;
+        app.in.down = true;
+        app.canvasInput();
+        app.in.endFrame();
+        bool grabbed = app.drag == DRAG_ANNO && app.dragAnno == r.id && app.selAnnos.count(r.id) > 0;
+        Vec2 move = app.toScreen(Vec2(400, 92));  // drag the shape 100 units to the right
+        app.in.mouse = move;
+        app.in.down = true;
+        app.canvasInput();
+        app.in.endFrame();
+        app.in.mouse = move;
+        app.in.down = false;
+        app.in.released = true;
+        app.canvasInput();
+        app.in.endFrame();
+        float ax = app.doc.annos.empty() ? 0.f : app.doc.annos[0].a.x;
+        printf("  press 8 px off the stroke: grabbed %s, moved to x %.0f, %zu shape(s)\n", grabbed ? "yes" : "no", (double)ax,
+               app.doc.annos.size());
+        check(grabbed, "a press just outside an existing stroke grabs that shape instead of starting a new one", failures);
+        check(app.doc.annos.size() == 1 && std::fabs(ax - 200.f) < 0.5f,
+              "dragging the grabbed shape moves it and draws no second shape", failures);
+        check(app.tool == TOOL_RECT, "the drawing tool stays active after grabbing a shape", failures);
+    }
+    {   // the same grab works over a part body: a drawing tool only cares about markup
+        App app;
+        setup(app);
+        // The part sits wherever its symbol puts it; a canvas big enough for the whole
+        // test window keeps the press inside it.
+        app.rCanvas = Rect(-4000, -4000, 12000, 12000);
+        const int pid = app.doc.addPart("74hc00", {}, {300, 250}).id;
+        const Rect body = app.doc.part(pid)->worldBounds(SCH);
+        Anno r;
+        r.id = app.doc.newId();
+        r.view = SCH;
+        r.kind = AnnoKind::Rect;
+        r.a = {body.x + body.w * 0.25f, body.y + body.h * 0.5f};
+        r.b = {body.r() - body.w * 0.25f, body.b() - body.h * 0.25f};
+        app.doc.annos.push_back(r);
+        // 8 px off the top edge of the frame, inside the body of the part it surrounds
+        Vec2 pressWorld = {r.a.x + (r.b.x - r.a.x) * 0.5f, r.a.y - 8.f};
+        Hit plain = app.hitTest(app.toScreen(pressWorld));
+        app.setTool(TOOL_RECT);
+        Vec2 press = app.toScreen(pressWorld);
+        app.in.mouse = press;
+        app.in.pressPos = press;
+        app.in.pressed = true;
+        app.in.down = true;
+        app.canvasInput();
+        app.in.endFrame();
+        bool grabbed = app.drag == DRAG_ANNO && app.dragAnno == r.id && app.doc.annos.size() == 1;
+        app.in.mouse = press;
+        app.in.down = false;
+        app.in.released = true;
+        app.canvasInput();
+        app.in.endFrame();
+        printf("  shape over a part body: plain hit kind %d, grabbed %s, %zu shape(s)\n", (int)plain.kind,
+               grabbed ? "yes" : "no", app.doc.annos.size());
+        check(plain.kind == Hit::PART || plain.kind == Hit::PIN,
+              "a point on a frame around a part belongs to that part for the selection tool", failures);
+        check(grabbed && app.doc.annos.size() == 1 && app.tool == TOOL_RECT,
+              "a shape tool grabs a frame drawn around a part instead of drawing a new shape", failures);
+    }
+    {   // a drawing tool draws over a picture: only shape strokes are grabbed, not image bodies
+        App app;
+        setup(app);
+        Anno pic;
+        pic.id = app.doc.newId();
+        pic.view = SCH;
+        pic.kind = AnnoKind::Image;
+        pic.a = {100, 100};
+        pic.b = {500, 400};
+        app.doc.annos.push_back(pic);
+        app.setTool(TOOL_RECT);
+        Vec2 p0 = app.toScreen(Vec2(200, 200)), p1 = app.toScreen(Vec2(400, 350));
+        app.in.mouse = p0; app.in.pressPos = p0; app.in.pressed = true; app.in.down = true;
+        app.canvasInput();
+        app.in.endFrame();
+        bool grabbedPicture = app.drag == DRAG_ANNO;
+        app.in.mouse = p1; app.in.down = true;
+        app.canvasInput();
+        app.in.endFrame();
+        app.in.mouse = p1; app.in.down = false; app.in.released = true;
+        app.canvasInput();
+        app.in.endFrame();
+        const Anno& moved = app.doc.annos[0];
+        check(!grabbedPicture && app.doc.annos.size() == 2 && app.doc.annos[1].kind == AnnoKind::Rect &&
+                  std::fabs(moved.a.x - 100.f) < 0.5f,
+              "a rectangle drawn over a picture is a new shape, the picture stays put", failures);
+    }
+    {   // a press on empty canvas still draws exactly one new shape
+        App app;
+        setup(app);
+        app.setTool(TOOL_RECT);
+        Vec2 press = app.toScreen(Vec2(600, 400));
+        app.in.mouse = press;
+        app.in.pressPos = press;
+        app.in.pressed = true;
+        app.in.down = true;
+        app.canvasInput();
+        app.in.endFrame();
+        bool drawing = app.annoDrawing && app.doc.annos.empty();
+        Vec2 move = app.toScreen(Vec2(750, 520));
+        app.in.mouse = move;
+        app.in.down = true;
+        app.canvasInput();
+        app.in.endFrame();
+        app.in.mouse = move;
+        app.in.down = false;
+        app.in.released = true;
+        app.canvasInput();
+        app.in.endFrame();
+        printf("  press on empty canvas: started drawing %s, %zu shape(s) after the release\n", drawing ? "yes" : "no",
+               app.doc.annos.size());
+        check(drawing && app.doc.annos.size() == 1 && !app.annoDrawing,
+              "a press on empty canvas still draws exactly one shape", failures);
+    }
+    {   // the wider stroke tolerance never takes a click away from a wire
+        App app;
+        setup(app);
+        Anno r;
+        r.id = app.doc.newId();
+        r.view = SCH;
+        r.kind = AnnoKind::Rect;
+        r.a = {100, 100};
+        r.b = {500, 300};
+        app.doc.annos.push_back(r);
+        Wire wr;
+        wr.id = app.doc.newId();
+        wr.view = SCH;
+        wr.pts = {Vec2(120, 100), Vec2(480, 100)};  // lies along the rectangle's top edge
+        app.doc.wires.push_back(wr);
+        Hit h = app.hitTest(app.toScreen(Vec2(300, 104)));
+        printf("  wire over a shape: hit kind %d (wire segment is %d)\n", (int)h.kind, (int)Hit::WIRE_SEG);
+        check(h.kind == Hit::WIRE_SEG, "a wire on top of a shape keeps the click", failures);
     }
 }
 

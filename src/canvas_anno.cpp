@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <string>
+#include <vector>
 
 #include "app.h"
 #include "i18n.h"
@@ -11,6 +12,111 @@
 // ---------------------------------------------------------------------------
 // Tool state
 // ---------------------------------------------------------------------------
+
+void App::beginInlineAnnoEdit(int id) {
+    Anno* anno = doc.anno(id);
+    if (readOnly || tool != TOOL_SELECT || !anno || anno->view != view || anno->kind != AnnoKind::Text || anno->hidden) return;
+    if (inlineAnnoEdit >= 0) finishInlineAnnoEdit();
+    inlineAnnoEdit = id;
+    inlineAnnoOriginal = *anno;
+    inlineAnnoText = anno->text;
+    inlineAnnoCheckpoint = false;
+    inlineAnnoRevision = doc.revision;
+    ui.focusField("annoinline" + std::to_string(id), true);
+}
+
+void App::updateInlineAnnoText(const std::string& text) {
+    Anno* anno = doc.anno(inlineAnnoEdit);
+    if (!anno || readOnly || doc.revision != inlineAnnoRevision || anno->text == text) return;
+    if (!inlineAnnoCheckpoint) {
+        inlineAnnoUndoDepth = undoStack.size();
+        inlineAnnoRedo = redoStack;
+        checkpoint();
+        inlineAnnoCheckpoint = true;
+    }
+    inlineAnnoText = text;
+    annoSetText(*anno, text);
+    annoFitText(*anno, g);  // a point text's box follows what is being typed
+    changed();
+    inlineAnnoRevision = doc.revision;
+}
+
+void App::finishInlineAnnoEdit(bool cancel) {
+    if (inlineAnnoEdit < 0) return;
+    if (cancel && inlineAnnoCheckpoint && doc.revision == inlineAnnoRevision) {
+        if (Anno* anno = doc.anno(inlineAnnoEdit)) {
+            *anno = inlineAnnoOriginal;
+            changed();
+            undoStack.resize(inlineAnnoUndoDepth);
+            redoStack = std::move(inlineAnnoRedo);
+        }
+    }
+    ui.cancelPendingFocus();
+    if (ui.fieldFocused("annoinline" + std::to_string(inlineAnnoEdit))) ui.clearFocus();
+    inlineAnnoEdit = -1;
+    inlineAnnoText.clear();
+    inlineAnnoCheckpoint = false;
+    inlineAnnoUndoDepth = 0;
+    inlineAnnoRedo.clear();
+}
+
+Rect App::inlineAnnoRect() {
+    const Anno* anno = doc.anno(inlineAnnoEdit);
+    if (!anno || anno->view != view) return {};
+    Vec2 top = toScreen(anno->a);
+    float width, height;
+    if (anno->pointText) {
+        // A point text has no frame to type into, so the editor grows with the text: it
+        // always fits the widest line, with a little room to keep going.
+        float px = anno->textSize * cam[view].zoom;
+        float lh = px * 1.35f;
+        float widest = 0;
+        int lines = 0;
+        size_t start = 0;
+        while (true) {
+            size_t nl = inlineAnnoText.find('\n', start);
+            std::string line = inlineAnnoText.substr(start, nl == std::string::npos ? std::string::npos : nl - start);
+            widest = std::max(widest, g.textWidth(line, px, anno->font));
+            lines++;
+            if (nl == std::string::npos) break;
+            start = nl + 1;
+        }
+        width = std::max(180 * ui.s, widest + 48 * ui.s);
+        height = std::max(64 * ui.s, lh * (float)std::max(1, lines) + 16 * ui.s);
+    } else {
+        Vec2 bottom = toScreen(anno->a + anno->b);
+        width = std::max(180 * ui.s, bottom.x - top.x);
+        height = std::max(64 * ui.s, bottom.y - top.y);
+    }
+    float rightEdge = compact && (drawerParts || drawerInspector || drawerLayers || drawerAI) ? rRight.x : rCanvas.r();
+    float leftEdge = rCanvas.x;
+    float topEdge = rCanvas.y;
+    float bottomEdge = rCanvas.b();
+    width = std::min(width, std::max(24 * ui.s, rightEdge - leftEdge));
+    height = std::min(height, std::max(24 * ui.s, bottomEdge - topEdge));
+    float left = std::clamp(top.x, leftEdge, rightEdge - width);
+    float upper = std::clamp(top.y, topEdge, bottomEdge - height);
+    return {left, upper, width, height};
+}
+
+void App::drawInlineAnnoEditor() {
+    if (inlineAnnoEdit < 0) return;
+    const Anno* anno = doc.anno(inlineAnnoEdit);
+    if (readOnly || tool != TOOL_SELECT || !anno || anno->view != view || anno->hidden || anno->kind != AnnoKind::Text || doc.revision != inlineAnnoRevision) {
+        finishInlineAnnoEdit();
+        return;
+    }
+    if (in.key(SDLK_ESCAPE)) { finishInlineAnnoEdit(true); return; }
+    Rect rect = inlineAnnoRect();
+    if (rect.w < 24 * ui.s || rect.h < 24 * ui.s) {
+        finishInlineAnnoEdit();
+        return;
+    }
+    std::string id = "annoinline" + std::to_string(inlineAnnoEdit);
+    bool submit = ui.textArea(id, rect, inlineAnnoText);
+    updateInlineAnnoText(inlineAnnoText);
+    if (submit || !ui.fieldFocused(id)) finishInlineAnnoEdit();
+}
 
 void App::setTool(CanvasTool t) {
     if (tool == t) return;
@@ -93,6 +199,9 @@ void App::createAnnoFromDrag(CanvasTool t, Vec2 a, Vec2 b) {
 // frame, so the selection code below it is skipped entirely.
 bool App::annoToolInput() {
     if (tool == TOOL_SELECT || readOnly) return false;
+    // A shape grabbed with a tool is run by canvas.cpp's DRAG_ANNO code — move,
+    // resize, and the commit on release. Hand the pointer back to it until then.
+    if (drag == DRAG_ANNO) return false;
     Vec2 m = in.mouse;
     bool overCanvas = rCanvas.contains(m) && !ui.overBlocking(m) &&
                       !(compact && (drawerParts || drawerInspector || drawerLayers || drawerAI) && rRight.contains(m));
@@ -110,24 +219,50 @@ bool App::annoToolInput() {
     }
 
     if (tool == TOOL_TEXT) {
+        // Click: point text, whose box hugs the glyphs and grows as you type.
+        // Drag: a text box the size of the frame dragged out (dashed preview on the way).
+        // Both open the in-place editor straight away, placeholder selected.
         if (in.pressed && overCanvas) {
-            Anno an;
-            an.id = doc.newId();
-            an.view = view;
-            an.kind = AnnoKind::Text;
-            an.a = toWorld(m);
-            an.b = Vec2(1800, 0);
-            annoSetText(an, tr("anno.placeholder"));
-            checkpoint();
-            doc.annos.push_back(an);
-            selParts.clear();
-            selWires.clear();
-            selNotes.clear();
-            selAnnos = {an.id};
-            changed();
-            // One text box per click. The inspector opens on a double-click, so the
-            // click that placed the box does not also open (and close) the drawer.
-            tool = TOOL_SELECT;
+            annoDrawing = true;
+            canvasOwnsPointer = true;
+            annoStart = toWorld(m);
+            annoNow = annoStart;
+            return true;
+        }
+        if (annoDrawing) {
+            annoNow = toWorld(m);
+            if (in.released) {
+                annoDrawing = false;
+                canvasOwnsPointer = false;
+                Vec2 dPx = toScreen(annoNow) - toScreen(annoStart);
+                bool dragged = std::fabs(dPx.x) > 6 * ui.s || std::fabs(dPx.y) > 6 * ui.s;
+                Anno an;
+                an.id = doc.newId();
+                an.view = view;
+                an.kind = AnnoKind::Text;
+                an.a = annoStart;
+                if (dragged) {
+                    // The frame is dragged out corner to corner: it never flips, and it never
+                    // shrinks below the size the resize handles allow.
+                    an.a = Vec2(std::min(annoStart.x, annoNow.x), std::min(annoStart.y, annoNow.y));
+                    an.b = Vec2(std::max(kTextBoxMinW, std::fabs(annoNow.x - annoStart.x)),
+                                std::max(kTextBoxMinH, std::fabs(annoNow.y - annoStart.y)));
+                } else {
+                    an.pointText = true;
+                }
+                annoSetText(an, tr("anno.placeholder"));
+                annoFitText(an, g);
+                checkpoint();
+                doc.annos.push_back(an);
+                selParts.clear();
+                selWires.clear();
+                selNotes.clear();
+                selAnnos = {an.id};
+                changed();
+                tool = TOOL_SELECT;  // one text per click: the next drag selects again
+                beginInlineAnnoEdit(an.id);
+                return true;
+            }
             return true;
         }
         return overCanvas || in.down;
@@ -178,8 +313,51 @@ bool App::annoToolInput() {
         return overCanvas;
     }
 
-    // Rectangle, line, circle: press to start, drag to size, release to commit.
+    // Rectangle, line, circle: press to start, drag to size, release to commit —
+    // unless the press lands on existing markup. Then the shape is grabbed (moved, or
+    // resized from one of its handles) exactly as the selection tool would, so a
+    // tool left active never keeps the user from fixing what is already drawn. Only
+    // a press on empty canvas starts a new shape.
+    //
+    // A drawing tool only cares about markup: parts are drawn over annotations (their
+    // priority 5 beats the annotation's 6), so a frame drawn around an IC would
+    // otherwise never be grabbable. The candidates are filtered down to handles first,
+    // then the nearest annotation stroke; pins, wires and part bodies are ignored here.
+    auto grabHit = [&](Vec2 at) {
+        std::vector<HitCand> cands;
+        collectHits(at, cands);
+        Hit best;
+        int bestPrio = 99;
+        float bestD = 1e30f;
+        for (auto& c : cands) {
+            int prio = c.h.kind == Hit::ANNO_HANDLE ? 0 : c.h.kind == Hit::ANNO ? 1 : 99;
+            if (prio == 99) continue;
+            // The body of a picture or a text box is a big hit area: drawing a frame over a
+            // screenshot must start a new shape, so only strokes (and handles) are grabbed.
+            if (c.h.kind == Hit::ANNO) {
+                const Anno* an = doc.anno(c.h.anno);
+                if (!an || an->kind == AnnoKind::Text || an->kind == AnnoKind::Image) continue;
+            }
+            if (prio < bestPrio || (prio == bestPrio && c.d < bestD)) {
+                bestPrio = prio;
+                bestD = c.d;
+                best = c.h;
+            }
+        }
+        return best;
+    };
     if (in.pressed && overCanvas) {
+        pressHit = grabHit(m);
+        if (pressHit.kind == Hit::ANNO || pressHit.kind == Hit::ANNO_HANDLE) {
+            canvasOwnsPointer = true;
+            pressWorld = toWorld(m);
+            startDrag();
+            if (in.released) {  // press and release in the same frame: commit now
+                finishPointer();
+                canvasOwnsPointer = false;
+            }
+            return true;
+        }
         annoDrawing = true;
         canvasOwnsPointer = true;
         annoStart = toWorld(m);
@@ -194,14 +372,35 @@ bool App::annoToolInput() {
         }
         return true;
     }
+    // The tool owns the pointer, so canvas.cpp never gets to compute a hover: mark the
+    // markup a press here would grab, so the shape lights up under the pointer.
+    hover = Hit();
+    if (overCanvas && !in.touch) {
+        Hit h = grabHit(m);
+        if (h.kind == Hit::ANNO || h.kind == Hit::ANNO_HANDLE) hover = h;
+    }
     return overCanvas;
 }
 
 void App::drawAnnoPreview(const Camera& c, float zoom, float uiScale) {
-    if (!annoDrawing || tool == TOOL_SELECT || tool == TOOL_TEXT) return;
+    if (!annoDrawing || tool == TOOL_SELECT) return;
     if (tool == TOOL_WIRE) {
         Vec2 a = c.pan + annoStart * zoom, b = c.pan + annoNow * zoom;
         g.dashedLine(a, b, std::max(1.5f * uiScale, 1.f), 8 * uiScale, 6 * uiScale, rgba(28, 116, 222, 200));
+        return;
+    }
+    if (tool == TOOL_TEXT) {
+        // The frame a dragged-out text box would get. A click makes point text instead,
+        // so nothing is shown until the pointer has actually moved.
+        Vec2 a = c.pan + annoStart * zoom, b = c.pan + annoNow * zoom;
+        if (std::fabs(b.x - a.x) <= 6 * uiScale && std::fabs(b.y - a.y) <= 6 * uiScale) return;
+        Rect r = Rect::fromPoints(a, b);
+        float w = std::max(1.5f * uiScale, 1.f), dash = 8 * uiScale, gap = 6 * uiScale;
+        uint32_t col = rgba(28, 116, 222, 200);
+        g.dashedLine({r.x, r.y}, {r.r(), r.y}, w, dash, gap, col);
+        g.dashedLine({r.r(), r.y}, {r.r(), r.b()}, w, dash, gap, col);
+        g.dashedLine({r.r(), r.b()}, {r.x, r.b()}, w, dash, gap, col);
+        g.dashedLine({r.x, r.b()}, {r.x, r.y}, w, dash, gap, col);
         return;
     }
     Anno an;

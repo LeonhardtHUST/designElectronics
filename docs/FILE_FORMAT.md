@@ -32,6 +32,7 @@ y axis points down. Breadboard holes are 100 mil apart.
   "wires":   [ ... ],
   "notes_":  [ ... ],              // sticky notes on the canvas
   "annos":   [ ... ],              // drawing annotations (version 2 and newer)
+  "images":  { ... },              // optional: pictures an image annotation points at
   "library": [ ... ]               // embedded part definitions
 }
 ```
@@ -105,26 +106,29 @@ pin, or within 3 mil of another wire end in the same view, connects to it.
 
 ## Annotations
 
-Markup drawn over the design: rectangles, lines, circles and text. Annotations
-are **never** electrical — they are not connected, simulated, routed, checked by
-DRC or written to a netlist, Gerber or BOM — so a circle drawn around a pin
-creates no net.
+Markup drawn over the design: rectangles, lines, circles, text and pictures.
+Annotations are **never** electrical — they are not connected, simulated, routed,
+checked by DRC or written to a netlist, Gerber or BOM — so a circle drawn around
+a pin creates no net.
 
 ```jsonc
 {
   "id": 21,
   "view": "schematic",             // breadboard | schematic | pcb
-  "kind": "rect",                  // rect | line | circle | text
+  "kind": "rect",                  // rect | line | circle | text | image
   // rect/line: start and end point. circle: centre and a point on the circle.
-  // text: top-left corner and the box size.
+  // text and image: top-left corner and the box size (b is a size, not a point).
   "a": [200, 1200],
   "b": [1600, 2400],
   "stroke": "#787c82",             // default: neutral grey
-  "fill": "#fff6b0",               // optional: text background only
+  "fill": "#fff6b0",               // optional: text/backdrop background
   "dashed": true,
-  "widthStep": 0,                  // reserved: 0/1/2
+  "widthStep": 0,                  // 0 thin, 1 medium, 2 thick, 3 extra thick
   "text": "check the polarity",    // kind == "text"
   "textSize": 108,                 // world units, as for notes
+  "image": "3b1f…d9c4",            // kind == "image": key into "images"
+  "rotation": 20,                  // kind == "image": degrees, clockwise about the centre
+  "framed": true,                  // kind == "image": draw a border (stroke/widthStep/dashed)
   "hidden": false                  // hidden by the Layers panel
 }
 ```
@@ -132,6 +136,66 @@ creates no net.
 An unknown `kind` is skipped on load (with a log line) and the rest of the file
 still opens. Version 1 files have no `annos` field at all: they load with an
 empty list.
+
+## Pictures (`images`)
+
+An image annotation keeps only a **content key**; the bytes live once in the
+top-level `images` object, so the same picture placed ten times is stored once:
+
+```jsonc
+"images": {
+  "3b1f…d9c4": {                    // SHA-1 of the bytes, lowercase hex
+    "mime": "image/png",            // image/png | image/jpeg | image/gif | image/bmp |
+                                    // image/webp | image/vnd.adobe.photoshop |
+                                    // image/x-tga | image/svg+xml
+    "w": 640, "h": 480,             // intrinsic pixels; SVG: its own width/viewBox size
+    "data": "iVBORw0KGgo…"          // the encoded bytes, base64, exactly as imported
+  }
+}
+```
+
+Only entries an annotation still refers to are written, and an `images` object
+with no users is left out entirely: deleting an annotation drops its picture from
+the next save. The key is a hash, so the content is immutable — loading a file
+keeps the pictures already in memory and adds the ones it brings.
+
+Pictures are **not** part of undo snapshots (they would multiply the memory of the
+150-step undo stack) and are **not** part of share links (`#d=…`): the bytes would
+push a URL far past what browsers and chat apps accept. A design shared by link
+therefore shows its markup but not its pictures; save it as a `.dez` file to carry
+them along.
+
+A picture gets into a design from the toolbar's Picture button, Edit ▸ Add
+Annotation ▸ Picture…, `Ctrl+V` with a picture on the system clipboard, or by
+dropping a file on the window. The same bytes always produce the same key, so
+copying an annotation through the internal clipboard carries one copy of the
+picture, and pasting it again adds nothing to the file.
+
+Supported formats and limits (sniffed from the bytes, never from the file name):
+
+| Format | Read as | Notes |
+| --- | --- | --- |
+| PNG | `image/png` | keeps the original bytes unless it is scaled |
+| JPEG | `image/jpeg` | |
+| GIF | `image/gif` | first frame only |
+| BMP | `image/bmp` | |
+| WebP | `image/webp` | lossy, lossless and alpha (libwebp decoder) |
+| PSD | `image/vnd.adobe.photoshop` | flattened composite (stb_image) |
+| TGA | `image/x-tga` | no magic number: recognised by name only |
+| SVG | `image/svg+xml` | kept as text and rasterized on demand |
+
+* at most **20 MB** of encoded bytes per picture;
+* at most **64 megapixels** decoded on import (enough for a 48–50 MP phone photo,
+  which is then scaled down; a picture whose *encoded* size is small but whose
+  bitmap would be huge is refused instead of allocated). Pictures stored in a file
+  are at most 4096 px on a side, so drawing never decodes more than that;
+* at most **4096 px** on the longest side. A bigger bitmap is scaled down and
+  re-encoded in place — PNG while it has transparency, JPEG (quality 90)
+  otherwise — and `note` on import says so. If it is still over 20 MB after that,
+  the import is refused;
+* SVG markup may be at most **5 MB**, and a rasterized SVG never exceeds 4096 px.
+* Not supported: AVIF, HEIC/HEIF, JPEG XL, animated GIF beyond the first frame and
+  compressed SVG (`.svgz`) — unzip it first.
 
 ## Part definitions (`library`, `.dezpart`)
 
