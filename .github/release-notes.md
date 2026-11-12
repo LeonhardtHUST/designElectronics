@@ -2,6 +2,17 @@ Free, open-source electronics design for desktop and phone: breadboard, schemati
 
 📖 **Documentation:** https://rorretbolt.github.io/designElectronics/ · 🌐 **Try it in your browser:** https://rorretbolt.github.io/designElectronics/#app
 
+## What's new in 0.7
+
+- **Pictures on the design.** Paste a screenshot with Ctrl+V, drop an image file on the window, or use the new **Picture** button: PNG, JPEG, GIF (first frame), BMP, WebP, PSD and SVG. Drag a corner or an edge to resize (Shift keeps the proportions), drag the handle above the picture to rotate it (Shift snaps to 15°). The inspector adds a backdrop for transparent pictures, a solid or dashed frame in four widths and the stroke palette, the rotation and "original proportions". SVG stays sharp at every zoom.
+- **Pictures travel with the project.** Each picture is stored once, by its content, inside the `.dez` file, in its own format; copy and paste carries it along, and undo never keeps extra copies. Up to 20 MB per picture; anything over 4096 px on its longest side (a 48 MP phone photo included) is scaled down on import, and the app says so. AVIF, HEIC and JPEG XL are not supported yet.
+- **Point text and text boxes.** As in Photoshop: click with the text tool for point text whose frame hugs the words and only breaks where you press Enter; drag for a text box of fixed size that wraps. Both open for typing straight away, placeholder selected. Switch between them in the inspector; text from older files loads as a text box, unchanged.
+- **Edit text where it is.** Double-click any text annotation to type on the canvas — Enter or a click elsewhere keeps the change (one undo step), Esc throws it away. Text can be set in the regular or the monospaced face.
+- **Stroke widths and an easier grab.** Rectangles, lines and circles come in thin, medium, thick and extra thick. A stroke is grabbable 10 px either side, and with a drawing tool still active a press on an existing shape moves or resizes it instead of starting a new one — including a frame drawn around a chip.
+- **Text fields behave like text fields.** Select with the mouse (drag, double-click a word) or Shift+arrows, Ctrl+A, cut, copy and paste over a selection — everywhere in the app, Chinese included.
+- **Fixes.** Markup placed on a breadboard can be clicked again (the breadboard used to win every click); moving a text box no longer stretches it; a dropdown taller than the window scrolls instead of flashing open and picking whatever was under the pointer; the stack panel's eye icon is a softer outline.
+
+Older versions open 0.7 projects without their pictures; everything else is unchanged.
 ## What's new in 0.6
 
 - **Draw on the design.** Rectangle, line, circle and text tools in the toolbar, with a neutral palette, solid or dashed strokes and a text box with its own size. Markup sits above the board and below the components, so a box around a circuit never hides a pin, and it is saved in the project without ever becoming copper: no nets, no ratsnest, no Gerber.
