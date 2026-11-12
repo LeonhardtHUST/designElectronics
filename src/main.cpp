@@ -9,7 +9,9 @@
 //   designElectronics --export-logo DIR         write logo.svg and app icon PNGs
 //   designElectronics --mcp                     run as an MCP server on stdin/stdout (for AI assistants)
 //   designElectronics --screenshot OUT.png [--example N] [--view bb|sch|pcb] [--sim]
-//                     [--autoroute] [--tidy] [--size WxH] [--drawer parts|inspector] [--select N]
+//                     [--autoroute] [--tidy] [--size WxH] [--drawer parts|inspector|layers]
+//                     [--select N] [--select-anno N]
+//                     [--events "frame:d|x:y, frame:u|x:y, frame:m|x:y, frame:k|keycode:mods, frame:w|0|notches"]
 #define SDL_MAIN_USE_CALLBACKS 1
 #include <cmath>
 #include <cctype>
@@ -27,6 +29,8 @@
 #include "logo.h"
 #include "mcp.h"
 #include "partmodels.h"
+#include "settings.h"
+#include "toml.h"
 #include "video.h"
 
 namespace {
@@ -36,6 +40,14 @@ int check(bool ok, const char* what, int& failures) {
     if (!ok) failures++;
     return ok;
 }
+
+// Defined below the example loop, declared here so selftest() can call it.
+void annoTests(int& failures);
+void hierarchyTests(int& failures);
+void hitTests(int& failures);
+void configTests(int& failures);
+void toolTests(int& failures);
+void keyTests(int& failures);
 
 
 // ---- circuit-building helpers for simulation tests ----
@@ -912,10 +924,701 @@ int selftest() {
     simTests(failures);
     historyTests(failures);
     layerTests(failures);
+    annoTests(failures);
+    hierarchyTests(failures);
+    hitTests(failures);
+    configTests(failures);
+    toolTests(failures);
+    keyTests(failures);
     tidyTests(failures);
     videoTests(failures);
     printf(failures ? "\n%d FAILURE(S)\n" : "\nAll tests passed.\n", failures);
     return failures ? 1 : 0;
+}
+
+// ---- annotations: markup that never becomes copper ----
+void annoTests(int& failures) {
+    printf("Annotations\n");
+    Document d;
+    examples()[0].build(d);
+    d.syncWireEnds();
+    Connectivity c0;
+    c0.build(d);
+    const int nets0 = c0.numNets();
+    const size_t rats0 = c0.ratsnest(d, BB).size();
+
+    Anno rect;
+    rect.id = d.newId(); rect.view = BB; rect.kind = AnnoKind::Rect; rect.a = {100, 200}; rect.b = {1600, 900};
+    Anno line;
+    line.id = d.newId(); line.view = SCH; line.kind = AnnoKind::Line; line.a = {0, 0}; line.b = {800, 600};
+    line.dashed = false; line.stroke = rgba(60, 60, 64);
+    Anno circ;
+    circ.id = d.newId(); circ.view = PCB; circ.kind = AnnoKind::Circle; circ.a = {2000, 1500}; circ.b = {2600, 1500};
+    Anno text;
+    text.id = d.newId(); text.view = SCH; text.kind = AnnoKind::Text; text.a = {100, 100};
+    annoSetText(text, "hello\nworld");
+    text.hidden = true;
+    d.annos = {rect, line, circ, text};
+
+    std::string full = d.serialize(true), compact = d.compactJson(), err;
+    Document back, share;
+    bool okFull = back.deserialize(full, &err);
+    bool okShare = share.deserialize(compact, &err);
+    const Anno* r2 = okFull ? back.anno(rect.id) : nullptr;
+    const Anno* l2 = okFull ? back.anno(line.id) : nullptr;
+    const Anno* c2 = okFull ? back.anno(circ.id) : nullptr;
+    const Anno* t2 = okFull ? back.anno(text.id) : nullptr;
+    printf("  round trip: %s%zu annotations, compact form %s%zu\n", okFull ? "" : "FAILED ", back.annos.size(),
+           okShare ? "" : "FAILED ", share.annos.size());
+    check(okFull && okShare && back.annos.size() == 4 && share.annos.size() == 4,
+          "annotations are saved in both the full and the compact form", failures);
+    check(r2 && r2->kind == AnnoKind::Rect && r2->view == BB && std::fabs(r2->a.x - 100) < 0.6f && std::fabs(r2->b.y - 900) < 0.6f &&
+              l2 && l2->view == SCH && !l2->dashed && l2->stroke == rgba(60, 60, 64) &&
+              c2 && c2->view == PCB && std::fabs(dist(c2->a, c2->b) - 600) < 0.6f &&
+              t2 && t2->hidden && t2->text == "hello\nworld" && t2->b.y > 0,
+          "each kind keeps its geometry, view, style and text", failures);
+
+    {   // an annotation kind from a newer build is skipped, the rest still load
+        Json j = Json::parse(full);
+        Json arr = j["annos"];
+        Json bad = Json::object();
+        bad.set("id", 9999);
+        bad.set("kind", "arrow");
+        bad.set("view", "breadboard");
+        arr.push(bad);
+        j.set("annos", arr);
+        Document mixed;
+        std::string e2;
+        bool ok = mixed.deserialize(j.dump(-1), &e2);
+        check(ok && mixed.annos.size() == 4, "an unknown annotation kind is skipped, the rest load", failures);
+    }
+    {   // a version 1 file has no "annos" at all: it must open, with no markup
+        Document plain;
+        examples()[0].build(plain);
+        plain.syncWireEnds();
+        Json j = Json::parse(plain.serialize(true));
+        j.set("version", 1);
+        std::string v1 = j.dump(-1);
+        size_t at = v1.find("\"annos\":[");
+        if (at != std::string::npos) v1.erase(at, v1.find(']', at) + 2 - at);
+        Document old;
+        std::string e2;
+        bool ok = old.deserialize(v1, &e2);
+        printf("  version 1 file: %s (%zu parts, %zu annotations)\n", ok ? "opens" : e2.c_str(), old.parts.size(), old.annos.size());
+        check(ok && old.annos.empty() && old.parts.size() == plain.parts.size(),
+              "a version 1 file opens with no annotations", failures);
+    }
+    {   // markup is never copper: no nets, no ratsnest, nothing in the exports
+        Connectivity c;
+        c.build(d);
+        std::string svg = exportSvg(d, c, SCH);
+        std::string net = exportNetlistXml(d, c);
+        bool netSame = c.numNets() == nets0 && c.ratsnest(d, BB).size() == rats0;
+        bool clean = svg.find("hello") == std::string::npos && net.find("hello") == std::string::npos;
+        printf("  nets %d (was %d), ratsnest %zu (was %zu)\n", c.numNets(), nets0, c.ratsnest(d, BB).size(), rats0);
+        check(netSame, "annotations over pins create no nets", failures);
+        check(clean, "annotations stay out of the SVG and netlist exports", failures);
+    }
+    {   // hit testing: the shape, not its bounding box
+        Anno box = rect;
+        check(annoHitTest(box, {100, 550}, 20.f) && !annoHitTest(box, {800, 550}, 20.f),
+              "a rectangle is hit on its frame, not through its middle", failures);
+        Anno l = line;
+        check(annoHitTest(l, {400, 300}, 5.f) && !annoHitTest(l, {400, 340}, 5.f), "a line is hit along its stroke", failures);
+        check(annoHitTest(circ, {2600, 1500}, 5.f) && !annoHitTest(circ, {2400, 1500}, 5.f), "a circle is hit on its rim", failures);
+        int hi = -1;
+        bool rimHandle = annoHitHandle(circ, {2600, 1510}, 20.f, &hi) && hi == 1;
+        bool centreHandle = annoHitHandle(circ, {2000, 1500}, 20.f, &hi) && hi == 0;
+        check(rimHandle && centreHandle, "a circle offers a centre and a radius handle", failures);
+        Anno box2 = rect;  // four corners, and dragging one keeps the opposite corner
+        bool fourCorners = annoHandleCount(box2) == 4;
+        Vec2 topRight = annoHandleAt(box2, 1);
+        annoMoveHandle(box2, 1, {topRight.x + 300, topRight.y - 200});
+        check(fourCorners && std::fabs(box2.a.x - rect.a.x) < 0.5f && std::fabs(box2.b.y - rect.b.y) < 0.5f &&
+                  std::fabs(box2.b.x - (rect.b.x + 300)) < 0.5f,
+              "a rectangle has four corner handles and the opposite corner stays", failures);
+        check(annoBounds(circ).w >= 1199.f && std::fabs(annoBounds(circ).center().x - 2000) < 1.f, "bounds follow the shape", failures);
+    }
+    {   // moving and resizing an annotation is undoable like any other edit
+        check(annoKindFromKey(annoKindKey(AnnoKind::Text), nullptr) && !annoKindFromKey("arrow", nullptr),
+              "annotation kinds round trip through their key", failures);
+        Anno t = text;
+        annoBumpTextSize(t, 40);
+        check(t.textSize > kNoteTextSize && t.b.y > text.b.y, "text size and box grow together", failures);
+    }
+}
+
+// ---- hierarchy: groups are levels, and groups never nest ----
+void hierarchyTests(int& failures) {
+    printf("Hierarchy\n");
+    Document d;
+    examples()[0].build(d);
+    std::vector<int> ids;
+    for (auto& p : d.parts) if (!p.def->isBoard && !p.def->isBreadboard) ids.push_back(p.id);
+    check(ids.size() >= 3, "the example has parts to stack", failures);
+    if (ids.size() < 3) return;
+
+    std::vector<int> three = {ids[0], ids[1], ids[2]};
+    bool grouped = d.groupParts(three);
+    int gid = d.part(three[0]) ? d.part(three[0])->group : 0;
+    int first = -1, last = -1, count = 0;
+    for (size_t i = 0; i < d.parts.size(); i++)
+        if (d.parts[i].group == gid && gid > 0) {
+            if (first < 0) first = (int)i;
+            last = (int)i;
+            count++;
+        }
+    printf("  grouped %d parts as group %d at [%d..%d]\n", count, gid, first, last);
+    check(grouped && gid > 0 && count == 3 && last - first + 1 == 3,
+          "grouping puts the parts on one level", failures);
+
+    std::string err;
+    Document back;
+    bool reread = back.deserialize(d.serialize(true), &err);
+    bool sameGroup = reread && back.part(three[0]) && back.part(three[1]) && back.part(three[2]) &&
+                     back.part(three[0])->group == gid && back.part(three[1])->group == gid && back.part(three[2])->group == gid;
+    check(sameGroup && back.nextGroup > gid, "group ids survive save and load", failures);
+
+    int idx0 = d.partIndex(three[1]);
+    bool down = d.moveLevel(three[1], -1);
+    int idxDown = d.partIndex(three[1]);
+    bool up = d.moveLevel(three[1], +1);
+    int idxUp = d.partIndex(three[1]);
+    printf("  level move: idx %d -> %d -> %d (down %d, up %d)\n", idx0, idxDown, idxUp, (int)down, (int)up);
+    check(down && idxDown < idx0 && up && idxUp == idx0, "a level moves down and back up as one block", failures);
+    bool stillTogether = d.partIndex(three[0]) >= 0 && d.partIndex(three[2]) >= 0 &&
+                         std::abs(d.partIndex(three[0]) - d.partIndex(three[2])) <= 2;
+    check(stillTogether, "a moved level keeps its parts together", failures);
+
+    int outsider = -1;
+    for (auto& p : d.parts) if (p.group == 0) { outsider = p.id; break; }
+    check(outsider > 0 && !d.groupParts({three[0], outsider}), "a part already in a group cannot join another", failures);
+
+    d.ungroup(gid);
+    check(d.part(three[0])->group == 0 && d.part(three[1])->group == 0 && d.part(three[2])->group == 0,
+          "ungrouping returns every part to its own level", failures);
+
+    {   // a group that loses a member is no longer a group
+        Document e;
+        examples()[0].build(e);
+        std::vector<int> two;
+        for (auto& p : e.parts) if (!p.def->isBoard && !p.def->isBreadboard) two.push_back(p.id);
+        e.groupParts({two[0], two[1]});
+        int g = e.part(two[0])->group;
+        e.removePart(two[1]);
+        check(g > 0 && e.part(two[0])->group == 0, "removing a member dissolves a two-part group", failures);
+    }
+    {   // a hand-edited file (or a removal) can leave members scattered: tidy them
+        Document e;
+        examples()[0].build(e);
+        std::vector<int> four;
+        for (auto& p : e.parts) if (!p.def->isBoard && !p.def->isBreadboard) four.push_back(p.id);
+        if (four.size() < 3) return;
+        e.part(four[0])->group = 7;
+        e.part(four[2])->group = 7;
+        e.nextGroup = 8;
+        e.normalizeGroups();
+        int s = -1, t = -1, n = 0;
+        for (size_t i = 0; i < e.parts.size(); i++)
+            if (e.parts[i].group == 7) { if (s < 0) s = (int)i; t = (int)i; n++; }
+        printf("  scattered group: %d member(s) at [%d..%d]\n", n, s, t);
+        check(n == 2 && t - s + 1 == 2, "scattered group members are pulled into one run", failures);
+    }
+}
+
+// ---- pointer hit priority, left/middle button semantics, the red "unconnected" dot ----
+void hitTests(int& failures) {
+    printf("Pointer hit priority\n");
+    App app;
+    app.ui.s = 1.f;
+    app.view = SCH;
+    app.cam[SCH].zoom = 1.f;
+    app.cam[SCH].pan = Vec2(200, 200);
+    app.cam[SCH].valid = true;
+    const int rid = app.doc.addPart("74hc00", {}, {1000, 1000}).id;  // a body big enough to miss the wire in
+    const Rect body = app.doc.part(rid)->worldBounds(SCH);
+    const Vec2 mid = body.center();
+    {
+        Wire wr;
+        wr.id = app.doc.newId();
+        wr.view = SCH;
+        wr.pts = {Vec2(body.x - 500, mid.y), Vec2(body.r() + 500, mid.y)};
+        app.doc.wires.push_back(wr);
+    }
+    auto hitAtPx = [&](float dxPx, float dyPx, float zoom) {
+        app.cam[SCH].zoom = zoom;
+        Vec2 world = mid + Vec2(dxPx, dyPx) / zoom;
+        return app.hitTest(app.toScreen(world));
+    };
+    bool wireWins = true, partWins = true;
+    for (float z : {0.25f, 1.f, 4.f}) {
+        Hit on = hitAtPx(0, 4, z), off = hitAtPx(0, 12, z);
+        printf("  zoom %.2fx: 4 px off the wire -> kind %d, 12 px off -> kind %d\n", z, (int)on.kind, (int)off.kind);
+        if (on.kind != Hit::WIRE_SEG) wireWins = false;
+        if (off.kind != Hit::PART && off.kind != Hit::PIN) partWins = false;
+    }
+    check(wireWins, "a wire crossing a part is picked within 6 px of its centre line, at any zoom", failures);
+    check(partWins, "off the wire the part under the pointer is picked, at any zoom", failures);
+    check(app.hitTest(app.toScreen(mid + Vec2(6000, 6000))).kind == Hit::NONE, "empty canvas hits nothing", failures);
+
+    {   // a left drag on a segment moves the whole wire and adds no bend point
+        size_t ptsBefore = app.doc.wires[0].pts.size();
+        app.pressHit = Hit();
+        app.pressHit.kind = Hit::WIRE_SEG;
+        app.pressHit.wire = app.doc.wires[0].id;
+        app.pressHit.index = 0;
+        app.pressWorld = mid;
+        app.in.mouse = app.toScreen(mid);
+        app.in.mods = 0;
+        app.startDrag();
+        printf("  left drag: %zu -> %zu point(s), mode %d\n", ptsBefore, app.doc.wires[0].pts.size(), (int)app.drag);
+        check(app.doc.wires[0].pts.size() == ptsBefore && app.drag == DRAG_MOVE,
+              "a left drag on a segment moves the wire instead of adding a bend", failures);
+        app.drag = DRAG_NONE;
+        app.endEdit();
+    }
+    {   // a selected annotation's handle is grabbable, and the shape is not
+        Anno a;
+        a.id = app.doc.newId();
+        a.view = SCH;
+        a.kind = AnnoKind::Rect;
+        a.a = mid + Vec2(-2500, 2500);
+        a.b = mid + Vec2(2500, 4000);
+        app.doc.annos.push_back(a);
+        app.cam[SCH].zoom = 1.f;
+        app.cam[SCH].pan = Vec2(0, 0);
+        Hit plain = app.hitTest(app.toScreen(a.b));
+        app.selAnnos = {a.id};
+        Hit handle = app.hitTest(app.toScreen(a.b));
+        printf("  annotation handle: unselected -> %d, selected -> %d\n", (int)plain.kind, (int)handle.kind);
+        check(handle.kind == Hit::ANNO_HANDLE && plain.kind != Hit::ANNO_HANDLE,
+              "the resize handle is grabbable only once the annotation is selected", failures);
+        app.selAnnos.clear();
+    }
+
+    {   // middle button: bend in on a segment, bend out on a bend, pan elsewhere
+        App a;
+        a.ui.s = 1.f;
+        a.view = SCH;
+        a.cam[SCH].zoom = 1.f;
+        a.cam[SCH].pan = Vec2(0, 0);
+        a.cam[SCH].valid = true;
+        a.snapToGrid = false;  // exact positions, so the new bend point is predictable
+        const int pid = a.doc.addPart("74hc00", {}, {1000, 1000}).id;
+        const Rect b = a.doc.part(pid)->worldBounds(SCH);
+        Wire w;
+        w.id = a.doc.newId();
+        w.view = SCH;
+        w.pts = {Vec2(b.x - 500, b.center().y), Vec2(b.r() + 500, b.center().y)};
+        a.doc.wires.push_back(w);
+        const int wid = w.id;
+        const size_t pts0 = a.doc.wire(wid)->pts.size();
+        Vec2 onSeg = b.center() + Vec2(300, 0);
+        a.in.mouse = a.toScreen(onSeg);  // the middle button works where the pointer is
+        bool panOnSeg = a.middleButtonPress(a.toScreen(onSeg));
+        size_t pts1 = a.doc.wire(wid)->pts.size();
+        Vec2 bend = a.doc.wire(wid)->pts[1];
+        a.in.mouse = a.toScreen(bend);
+        bool panOnBend = a.middleButtonPress(a.toScreen(bend));
+        size_t pts2 = a.doc.wire(wid)->pts.size();
+        bool panOnBlank = a.middleButtonPress(a.toScreen(b.center() + Vec2(0, 4000)));
+        size_t pts3 = a.doc.wire(wid)->pts.size();
+        printf("  middle button: segment %zu pts (pan %d), bend %zu pts (pan %d), blank %zu pts (pan %d)\n", pts1, (int)panOnSeg, pts2,
+               (int)panOnBend, pts3, (int)panOnBlank);
+        check(!panOnSeg && pts1 == pts0 + 1 && std::fabs(bend.y - onSeg.y) < 0.5f,
+              "the middle button adds a bend point on a wire segment", failures);
+        check(!panOnBend && pts2 == pts0, "the middle button removes a bend point", failures);
+        check(panOnBlank && pts3 == pts0, "the middle button on empty canvas pans and adds no bend", failures);
+        a.drag = DRAG_NONE;
+    }
+
+    {   // the proximity grid answers exactly like the old full scan, at 200 wires
+        App g;
+        g.ui.s = 1.f;
+        g.view = SCH;
+        g.cam[SCH].zoom = 1.f;
+        g.cam[SCH].valid = true;
+        const int wires = 200;
+        for (int i = 0; i < wires; i++) {
+            Wire w;
+            w.id = g.doc.newId();
+            w.view = SCH;
+            // every third wire shares an end with the previous one, the rest stand alone
+            float x = (float)((i / 3) * 600);
+            float y = (float)((i % 3) * 400);
+            w.pts = {Vec2(x, y), Vec2(x + 400, y)};
+            if (i % 3 == 2) w.pts.back() = Vec2(x + 400, y - 400);  // a bend, so segments matter
+            g.doc.wires.push_back(w);
+        }
+        // and one wire whose free end sits on another wire's middle
+        Wire cross;
+        cross.id = g.doc.newId();
+        cross.view = SCH;
+        cross.pts = {Vec2(200, 1500), Vec2(200, 2500)};
+        g.doc.wires.push_back(cross);
+
+        int mismatches = 0;
+        for (auto& w : g.doc.wires) {
+            for (int e = 0; e < 2; e++) {
+                Vec2 p = e == 0 ? w.pts.front() : w.pts.back();
+                float tol = g.wireJoinTol(w.view);
+                bool brute = false;
+                for (auto& o : g.doc.wires) {
+                    if (o.id == w.id) continue;
+                    if (dist(o.pts.front(), p) <= tol || dist(o.pts.back(), p) <= tol) brute = true;
+                    for (size_t k = 0; k + 1 < o.pts.size(); k++)
+                        if (distPointSeg(p, o.pts[k], o.pts[k + 1]) <= tol) brute = true;
+                }
+                if (brute != g.wireEndConnected(w, e)) mismatches++;
+            }
+        }
+        printf("  %d wires, %d disagreement(s) with the full scan\n", (int)g.doc.wires.size(), mismatches);
+        check(mismatches == 0, "the cached wire proximity answers exactly like a full scan", failures);
+    }
+
+    printf("Unconnected wire ends\n");
+    {
+        App a;
+        a.ui.s = 1.f;
+        a.view = SCH;
+        a.cam[SCH].zoom = 1.f;
+        a.cam[SCH].valid = true;
+        const int p1 = a.doc.addPart("resistor", {}, {0, 0}).id;
+        const int p2 = a.doc.addPart("resistor", {}, {3000, 0}).id;
+        Wire w;
+        w.id = a.doc.newId();
+        w.view = SCH;
+        w.ends[0] = {p1, 0};
+        w.ends[1] = {p2, 0};
+        w.pts = {a.doc.part(p1)->pinPos(0, SCH), a.doc.part(p2)->pinPos(0, SCH)};
+        a.doc.wires.push_back(w);
+        const int wid = w.id;
+        bool both = a.wireEndConnected(*a.doc.wire(wid), 0) && a.wireEndConnected(*a.doc.wire(wid), 1);
+        // a part moved away leaves ends[] attached but the point in mid-air
+        a.doc.wire(wid)->pts.back() = a.doc.wire(wid)->pts.back() + Vec2(0, 900);
+        bool staleRed = !a.wireEndConnected(*a.doc.wire(wid), 1);
+        bool otherGreen = a.wireEndConnected(*a.doc.wire(wid), 0);
+        // the frame the end snaps onto a pin, before finishPointer() writes ends[]
+        a.drag = DRAG_WIRE_END;
+        a.dragWire = wid;
+        a.dragWireEnd = 1;
+        a.wireTargetPart = p2;
+        bool snapping = a.wireEndConnected(*a.doc.wire(wid), 1);
+        a.drag = DRAG_NONE;
+        a.wireTargetPart = -1;
+        // a free end touching another wire's segment is connected too
+        Vec2 tip = a.doc.wire(wid)->pts.back();
+        Wire o;
+        o.id = a.doc.newId();
+        o.view = SCH;
+        o.pts = {tip + Vec2(-300, 0), tip + Vec2(300, 0)};
+        a.doc.wires.push_back(o);
+        bool joined = a.wireEndConnected(*a.doc.wire(wid), 1);
+        // deleting the part brings the dot back at once
+        a.doc.removePart(p1);
+        bool redAfterDelete = !a.wireEndConnected(*a.doc.wire(wid), 0);
+        printf("  both ends %d, stale end red %d (other end %d), snapping %d, joined %d, after delete %d\n", (int)both, (int)staleRed,
+               (int)otherGreen, (int)snapping, (int)joined, (int)redAfterDelete);
+        check(both, "a wire snapped onto pins at both ends has no red dot", failures);
+        check(staleRed && otherGreen, "only the end left behind by a moved part turns red", failures);
+        check(snapping, "the red dot disappears on the frame the end snaps", failures);
+        check(joined, "a free end touching another wire counts as connected", failures);
+        check(redAfterDelete, "deleting the part turns its wire ends red again", failures);
+    }
+}
+
+// ---- config.toml: the preferences file, its migration and its fallbacks ----
+void configTests(int& failures) {
+    printf("Preferences (config.toml)\n");
+    const std::string src =
+        "# interface language, kept from the last run\n"
+        "language = \"en\"\n"
+        "unknown_setting = 7   # written by hand, not by this build\n"
+        "\n"
+        "[window]\n"
+        "width = 1024   # pixels\n"
+        "palette = [\"top\", \"bottom\"]\n";
+    toml::Doc d;
+    std::string err;
+    bool parsed = d.parse(src, &err);
+    printf("  parse: %s, %zu keys\n", parsed ? "ok" : err.c_str(), d.v.size());
+    check(parsed && d.get("language") == "en" && d.getInt("window.width") == 1024 && d.get("window.palette") == "[\"top\", \"bottom\"]",
+          "toml: values are read back by their section.key name", failures);
+
+    d.set("language", "zh-CN");
+    d.set("note", "he said \"hi\"");
+    d.setInt("window.height", 768);
+    d.setBool("window.maximized", true);
+    std::string out = d.dump();
+    bool keptComments = out.find("# interface language, kept from the last run") != std::string::npos &&
+                        out.find("width = 1024   # pixels") != std::string::npos &&
+                        out.find("unknown_setting = 7   # written by hand, not by this build") != std::string::npos &&
+                        out.find("palette = [\"top\", \"bottom\"]") != std::string::npos;
+    bool wroteValues = out.find("language = \"zh-CN\"") != std::string::npos &&
+                       out.find("note = \"he said \\\"hi\\\"\"") != std::string::npos &&
+                       out.find("height = 768") != std::string::npos && out.find("maximized = true") != std::string::npos;
+    toml::Doc back;
+    bool reparsed = back.parse(out, &err);
+    printf("  written file: %s\n", reparsed ? "reads back" : err.c_str());
+    check(keptComments, "toml: comments, unknown keys and formatting survive a write", failures);
+    check(wroteValues, "toml: changed keys are replaced in place and new ones appended to their section", failures);
+    check(reparsed && back.get("language") == "zh-CN" && back.get("note") == "he said \"hi\"" && back.getInt("window.height") == 768 &&
+              back.getBool("window.maximized"),
+          "toml: the written file reads back with the new values", failures);
+    check(out.rfind("# interface language", 0) == 0 && out.find("\nheight = 768") < out.find("maximized = true"),
+          "toml: the header comment stays first and new keys are grouped", failures);
+
+    {   // a damaged file is reported with a line, it does not take the editor down
+        toml::Doc bad;
+        std::string e2;
+        bool ok = bad.parse("this is not a toml line\n", &e2);
+        toml::Doc bad2;
+        std::string e3;
+        bool ok2 = bad2.parse("[window\nwidth = 1\n", &e3);
+        printf("  damaged: %s / %s\n", e2.c_str(), e3.c_str());
+        check(!ok && !e2.empty() && !ok2 && !e3.empty(), "toml: a damaged file is reported, not silently half-read", failures);
+    }
+
+    {   // settings.json (the old format) becomes a config.toml, language included
+        bool ok = false;
+        std::string migrated = settingsMigrateJson("{\"version\": 1, \"language\": \"en\", \"maximized\": true, \"zoom\": 2}", &ok);
+        toml::Doc m;
+        std::string e2;
+        bool mp = m.parse(migrated, &e2);
+        printf("  migrated: %s\n", migrated.substr(0, migrated.find('\n')).c_str());
+        check(ok && mp && migrated.rfind("# migrated from settings.json on ", 0) == 0,
+              "an old settings.json turns into config.toml with a note about where it came from", failures);
+        check(m.get("language") == "en" && m.getBool("maximized") && m.getInt("zoom") == 2 && m.v.count("version") == 0,
+              "the migration keeps every setting and drops the JSON schema version", failures);
+        bool ok2 = true;
+        settingsMigrateJson("not json at all", &ok2);
+        check(!ok2, "a damaged settings.json is refused instead of migrated", failures);
+    }
+
+    {   // the settings API keeps its old shape: same names, same defaults
+        std::string path = settingsPath();
+        printf("  path: %s\n", path.empty() ? "(none)" : path.c_str());
+        check(path.size() >= 11 && path.compare(path.size() - 11, 11, "config.toml") == 0,
+              "preferences live in config.toml", failures);
+    }
+}
+
+// Keeps the real preferences file untouched while a test writes to it: the settings
+// API is the only entry point, so the test has to go through it.
+struct PrefsGuard {
+    std::string path, bak, text, bakText;
+    bool had = false, hadBak = false;
+    PrefsGuard() {
+        path = settingsPath();
+        bak = path + ".bak";
+        text = readTextFile(path, &had);
+        bakText = readTextFile(bak, &hadBak);
+    }
+    ~PrefsGuard() {
+        if (had) writeTextFile(path, text);
+        else if (!path.empty()) SDL_RemovePath(path.c_str());
+        if (hadBak) writeTextFile(bak, bakText);
+        else if (!bak.empty()) SDL_RemovePath(bak.c_str());
+    }
+};
+
+// ---- markup tools and the wire colour new wires inherit ----
+void toolTests(int& failures) {
+    printf("Markup tools\n");
+    App a;
+    a.ui.s = 1.f;
+    a.view = BB;
+    a.cam[BB].zoom = 1.f;
+    a.cam[BB].pan = Vec2(0, 0);
+    a.cam[BB].valid = true;
+    a.snapToGrid = false;
+    a.createAnnoFromDrag(TOOL_RECT, {100, 100}, {900, 700});
+    a.createAnnoFromDrag(TOOL_CIRCLE, {2000, 500}, {2400, 500});
+    a.createAnnoFromDrag(TOOL_LINE, {3000, 500}, {3000, 500});
+    const Anno& circ = a.doc.annos[1];
+    const Anno& clickLine = a.doc.annos[2];
+    printf("  %zu annotations, circle radius %.0f, click-line length %.0f, undo steps %zu\n", a.doc.annos.size(),
+           (double)dist(circ.a, circ.b), (double)dist(clickLine.a, clickLine.b), a.undoStack.size());
+    check(a.doc.annos.size() == 3 && a.doc.annos[0].kind == AnnoKind::Rect && circ.kind == AnnoKind::Circle &&
+              clickLine.kind == AnnoKind::Line,
+          "the tools make a rectangle, a circle and a line", failures);
+    check(std::fabs(dist(circ.a, circ.b) - 400) < 0.5f, "a circle drag sets the radius", failures);
+    check(dist(clickLine.a, clickLine.b) > 0, "a click without a drag still makes a usable shape", failures);
+    check(a.undoStack.size() == 3, "each drawn shape is exactly one undo step", failures);
+    check(a.selAnnos.size() == 1 && a.selAnnos.count(clickLine.id) > 0, "the new shape is selected", failures);
+    a.undo();
+    check(a.doc.annos.size() == 2, "one undo removes the last shape", failures);
+    a.setTool(TOOL_TEXT);
+    bool toolOn = a.tool == TOOL_TEXT && a.selAnnos.empty();
+    a.cancelAnnoTool();
+    check(toolOn && a.tool == TOOL_SELECT, "a tool can be picked and cancelled", failures);
+
+    printf("Remembered wire colour\n");
+    PrefsGuard guard;  // put the user's config.toml back when we are done
+    {
+        App b;
+        b.ui.s = 1.f;
+        b.view = BB;
+        b.cam[BB].zoom = 1.f;
+        b.cam[BB].valid = true;
+        Wire w;
+        w.id = b.doc.newId();
+        w.view = BB;
+        w.pts = {{0, 0}, {500, 0}};
+        b.doc.wires.push_back(w);
+        const int wid = w.id;
+        const uint32_t red = rgba(220, 50, 50);
+        b.setWireColor(BB, wid, red);
+        bool wireRed = b.doc.wire(wid)->color == red;
+        bool memRed = b.wireColorMem[BB] == red;
+        bool stored = parseColor(settingsGet("wire.color.bb", ""), 0) == red;
+        printf("  bb memory %s, stored %s\n", colorToHex(b.wireColorMem[BB]).c_str(), settingsGet("wire.color.bb", "(none)").c_str());
+        check(wireRed && memRed, "picking a colour repaints the wire and remembers it", failures);
+        check(stored, "the remembered colour is written to config.toml", failures);
+        // per view: the PCB choice must not change the breadboard colour
+        uint32_t bbMem = b.wireColorMem[BB];
+        b.wireColorMem[PCB] = rgba(40, 170, 80);
+        b.saveWirePrefs(PCB);
+        check(b.wireColorMem[BB] == bbMem, "each view remembers its own colour", failures);
+        // a fresh app reads it back (what the next start does)
+        App c2;
+        c2.loadWirePrefs();
+        check(c2.wireColorMem[BB] == red && c2.wireColorMem[PCB] == rgba(40, 170, 80),
+              "the remembered colours are read back on the next start", failures);
+        // the eyedropper: take a wire's colour without repainting anything
+        b.setWireColor(BB, wid, rgba(65, 140, 225));
+        check(b.wireColorMem[BB] == rgba(65, 140, 225), "the eyedropper colour becomes the new-wire colour", failures);
+    }
+    {
+        App c;
+        c.ui.s = 1.f;
+        const int p1 = c.doc.addPart("resistor", {}, {0, 0}).id;
+        const int p2 = c.doc.addPart("resistor", {}, {1500, 0}).id;
+        Wire w;
+        w.id = c.doc.newId();
+        w.view = BB;
+        w.ends[0] = {p1, 0};
+        w.ends[1] = {p2, 0};
+        w.pts = {c.doc.part(p1)->pinPos(0, BB), c.doc.part(p2)->pinPos(0, BB)};
+        c.doc.wires.push_back(w);
+        Connectivity conn;
+        conn.build(c.doc);
+        uint32_t memBefore = c.wireColorMem[PCB];
+        RouteResult r = autoroute(c.doc, conn, true);
+        printf("  autoroute: %d routed, %d failed, memory unchanged %d\n", r.routed, r.failed, (int)(c.wireColorMem[PCB] == memBefore));
+        check(c.wireColorMem[PCB] == memBefore, "the autorouter never touches the remembered colour", failures);
+    }
+}
+
+// ---- rebindable keys and mouse roles ----
+void keyTests(int& failures) {
+    printf("Keyboard and mouse mapping\n");
+    Bindings d = defaultBindings();
+    check(d.chord[(int)Action::Undo] == KeyChord{SDLK_Z, true, false, false} && d.chord[(int)Action::Delete].key == SDLK_DELETE &&
+              !d.chord[(int)Action::AddBend].bound() && d.mouse[SLOT_MIDDLE] == MouseRole::Auto,
+          "the factory bindings are the documented ones", failures);
+
+    bool roundTrip = true;
+    for (int i = 0; i < kActionCount; i++) {
+        KeyChord back;
+        if (!chordFromText(chordToToken(d.chord[i]), &back) || back != d.chord[i]) roundTrip = false;
+        KeyChord shown;  // and the text the dialog shows parses back to the same chord
+        if (d.chord[i].bound() && (!chordFromText(chordToText(d.chord[i]), &shown) || shown != d.chord[i])) roundTrip = false;
+    }
+    printf("  undo %s, redo %s, unbound %s\n", chordToToken(d.chord[(int)Action::Undo]).c_str(),
+           chordToText(d.chord[(int)Action::Redo]).c_str(), chordToText(KeyChord()).c_str());
+    check(roundTrip, "every binding survives a round trip through its config.toml text", failures);
+    check(chordToText(d.chord[(int)Action::Redo]) == "Ctrl+Shift+Z" && chordToText(KeyChord()) == tr("keys.unbound"),
+          "a binding is shown as Ctrl+Shift+Z, and an empty one as \"not bound\"", failures);
+
+    KeyChord c;
+    check(chordFromText("alt+left", &c) && c.key == SDLK_LEFT && c.alt && !c.ctrl && !c.shift,
+          "a chord is parsed from alt+left", failures);
+    check(chordFromText("none", &c) && !c.bound(), "\"none\" unbinds", failures);
+    check(!chordFromText("ctrl+nosuchkey", &c) && !chordFromText("hyper+z", &c), "nonsense is rejected, not guessed", failures);
+
+    check(!chordAllowed(Action::Delete, KeyChord{SDLK_X, false, false, false}) &&
+              chordAllowed(Action::Delete, KeyChord{SDLK_X, true, false, false}) &&
+              chordAllowed(Action::Delete, KeyChord{SDLK_DELETE, false, false, false}) &&
+              chordAllowed(Action::Copy, KeyChord{SDLK_X, false, false, false}),
+          "a bare key can't be a delete, a modifier or Delete itself can", failures);
+
+    PrefsGuard guard;  // the binding tests write config.toml; put the user's file back
+    {
+        App k;
+        k.binds = defaultBindings();
+        // Alt+Left for AddBend: live, and the middle button goes back to panning
+        KeyChord altLeft{SDLK_LEFT, false, false, true};
+        bool middleWasAuto = k.mouseRoleFor(SLOT_MIDDLE) == MouseRole::Auto;
+        k.applyBinding(Action::AddBend, altLeft);
+        Input in;
+        in.mods = SDL_KMOD_ALT;
+        in.keys = {SDLK_LEFT};
+        bool fires = actionFor(k.binds, in) == (int)Action::AddBend;
+        bool middlePans = k.mouseRoleFor(SLOT_MIDDLE) == MouseRole::Pan;
+        printf("  AddBend on %s: fires %d, middle pans %d\n", chordToText(altLeft).c_str(), (int)fires, (int)middlePans);
+        check(middleWasAuto && fires && middlePans,
+              "binding AddBend to a key works at once and hands the middle button back to pan", failures);
+
+        // a conflict replaces the loser, which is left unbound
+        KeyChord copyChord = k.binds.chord[(int)Action::Copy];
+        int loser = findChord(k.binds, copyChord, (int)Action::Paste);
+        k.applyBinding(Action::Paste, copyChord, loser);
+        bool moved = k.binds.chord[(int)Action::Paste] == copyChord && loser == (int)Action::Copy &&
+                     !k.binds.chord[(int)Action::Copy].bound();
+        printf("  Copy's chord moved to Paste: loser %d (%s), now %s\n", loser, actionId((Action)loser),
+               chordToText(k.binds.chord[(int)Action::Copy]).c_str());
+        check(moved, "replacing a shortcut unbinds the action that had it", failures);
+
+        // the sheet's "restore all" is exactly defaultBindings()
+        k.binds = defaultBindings();
+        bool factory = true;
+        Bindings ref = defaultBindings();
+        for (int i = 0; i < kActionCount; i++)
+            if (k.binds.chord[i] != ref.chord[i]) factory = false;
+        for (int i = 0; i < kMouseSlots; i++)
+            if (k.binds.mouse[i] != ref.mouse[i]) factory = false;
+        check(factory, "restoring the defaults equals defaultBindings()", failures);
+
+        // persistence: what the sheet saves is what the next start loads
+        k.binds.chord[(int)Action::AddBend] = altLeft;
+        k.binds.mouse[SLOT_MIDDLE] = MouseRole::Pan;
+        k.saveBindings();
+        App fresh;
+        fresh.loadBindings();
+        std::string stored = settingsGet("shortcut.add_bend", "(missing)");
+        printf("  stored shortcut.add_bend = %s, mouse.middle = %s\n", stored.c_str(), settingsGet("mouse.middle", "?").c_str());
+        check(fresh.binds.chord[(int)Action::AddBend] == altLeft && fresh.binds.mouse[SLOT_MIDDLE] == MouseRole::Pan,
+              "custom bindings are saved to config.toml and read back on the next start", failures);
+        check(fresh.binds.chord[(int)Action::Undo] == ref.chord[(int)Action::Undo],
+              "bindings that were never touched keep their default", failures);
+    }
+    {   // the shortcuts dialog is generated from the table, not from hard-coded text
+        App k;
+        k.binds = defaultBindings();
+        std::vector<std::string> lines = k.shortcutLines();
+        bool undoLine = !lines.empty() && lines[0].find("Ctrl+Z") != std::string::npos;
+        bool bendLine = false;
+        for (auto& l : lines)
+            if (l.find(tr("shortcut.14")) != std::string::npos) bendLine = true;
+        printf("  shortcuts dialog: %zu lines, undo line %s\n", lines.size(), lines.empty() ? "-" : lines[0].c_str());
+        check(lines.size() == (size_t)kActionCount + 7 && undoLine && bendLine,
+              "the shortcuts dialog lists every action from the table, including the bend-point tip", failures);
+        k.binds.chord[(int)Action::AddBend] = KeyChord{SDLK_LEFT, false, false, true};
+        std::vector<std::string> after = k.shortcutLines();
+        bool shown = false;
+        for (auto& l : after)
+            if (l.find("Alt+Left") != std::string::npos || l.find("Alt+\u2190") != std::string::npos) shown = true;
+        check(shown, "a rebound action shows its new keys in the dialog", failures);
+    }
+    {
+        // a damaged value in the file falls back to the default instead of breaking the app
+        settingsSet("shortcut.undo", "not-a-key");
+        App broken;
+        broken.loadBindings();
+        check(broken.binds.chord[(int)Action::Undo] == defaultBindings().chord[(int)Action::Undo],
+              "a nonsense binding in config.toml falls back to the default", failures);
+    }
 }
 
 int exportExamples(const std::string& dir) {
@@ -983,9 +1686,11 @@ struct Screenshot {
     int w = 0, h = 0;
     std::string drawer;
     int select = -1;
+    int selectAnno = -1;  // index into the annotations of the loaded design
     std::string menu;
     std::string sheet;  // history | commit | account
     bool openCode = false;  // open the program panel of the first board
+    bool welcome = false;   // --welcome: capture the first screen
     std::string ai;         // --ai "prompt": run the AI tab with this message, capture when it finishes
     bool aiStarted = false;
     // scripted pointer events: frame -> (type, x, y) in window points
@@ -1144,6 +1849,7 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
         else if (a == "--frames") g_shot.frames = std::atoi(next().c_str());
         else if (a == "--drawer") g_shot.drawer = next();
         else if (a == "--select") g_shot.select = std::atoi(next().c_str());
+        else if (a == "--select-anno") g_shot.selectAnno = std::atoi(next().c_str());
         else if (a == "--menu") g_shot.menu = next();
         else if (a == "--sheet") g_shot.sheet = next();
         else if (a == "--open-code") g_shot.openCode = true;
@@ -1161,6 +1867,7 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
             }
         }
         else if (a == "--embed") g_embed = true;
+        else if (a == "--welcome") g_shot.welcome = true;
         else if (a == "--record") g_record = next();
         else if (a == "--record-ui") g_ui.path = next();
         else if (a == "--animate") g_animate = next();
@@ -1184,6 +1891,7 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
     g_app->editorUrl = g_editorUrl;
     g_app->scratchSession = !g_shot.out.empty() || !g_record.empty();
     if (!g_app->init((int)rest.size(), rest.data())) return SDL_APP_FAILURE;
+    if (g_shot.welcome) g_app->startScreen = true;  // --welcome: photograph the first screen
     if (g_loadExample >= 0 && g_loadExample < (int)examples().size()) {
         g_app->doc.clear();
         examples()[(size_t)g_loadExample].build(g_app->doc);
@@ -1216,6 +1924,8 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
         if (g_shot.tidy) { for (int v = 0; v < NUM_VIEWS; v++) tidyWires(g_app->doc, v); g_app->doc.syncWireEnds(); g_app->doc.touch(); }
         if (g_shot.sim) g_app->simOn = true;
         if (g_shot.select >= 0 && g_shot.select < (int)g_app->doc.parts.size()) g_app->selParts = {g_app->doc.parts[(size_t)g_shot.select].id};
+        if (g_shot.selectAnno >= 0 && g_shot.selectAnno < (int)g_app->doc.annos.size())
+            g_app->selAnnos = {g_app->doc.annos[(size_t)g_shot.selectAnno].id};
         // screenshots are for sharing: no local file path or "Opened…" toast in them
         g_app->filePath.clear();
         g_app->ui.toast("", 0);
@@ -1302,6 +2012,11 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             } else if (ev.type == 'k') {
                 e.type = SDL_EVENT_KEY_DOWN;
                 e.key.windowID = wid; e.key.key = (SDL_Keycode)ev.x; e.key.mod = (SDL_Keymod)ev.y; e.key.down = true;
+            } else if (ev.type == 'w') {
+                // Wheel notches in y, at wherever the pointer last was.
+                e.type = SDL_EVENT_MOUSE_WHEEL;
+                e.wheel.windowID = wid; e.wheel.x = 0; e.wheel.y = ev.y != 0 ? ev.y : -1;
+                e.wheel.mouse_x = app->in.mouse.x; e.wheel.mouse_y = app->in.mouse.y;
             }
             app->event(e);
         }

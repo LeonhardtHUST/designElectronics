@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(designElectronics VERSION 0.5.2 LANGUAGES C CXX)
+project(designElectronics VERSION 0.6.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -24,16 +24,21 @@ set(DE_SOURCES
   src/main.cpp
   src/app.cpp
   src/canvas.cpp
+  src/canvas_anno.cpp
   src/panels.cpp
   src/ui.cpp
   src/gfx.cpp
   src/json.cpp
   src/i18n.cpp
   src/settings.cpp
+  src/keys.cpp
+  src/panels_settings.cpp
+  src/toml.cpp
   src/partlib.cpp
   src/catalog.cpp
   src/packages.cpp
   src/doc.cpp
+  src/anno.cpp
   src/router.cpp
   src/tidy.cpp
   src/drc.cpp

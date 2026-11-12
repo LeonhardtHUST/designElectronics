@@ -2,6 +2,18 @@ Free, open-source electronics design for desktop and phone: breadboard, schemati
 
 📖 **Documentation:** https://rorretbolt.github.io/designElectronics/ · 🌐 **Try it in your browser:** https://rorretbolt.github.io/designElectronics/#app
 
+## What's new in 0.6
+
+- **Draw on the design.** Rectangle, line, circle and text tools in the toolbar, with a neutral palette, solid or dashed strokes and a text box with its own size. Markup sits above the board and below the components, so a box around a circuit never hides a pin, and it is saved in the project without ever becoming copper: no nets, no ratsnest, no Gerber.
+- **A sidebar that stacks components, not layers.** The Stack panel (formerly Layers) lists one row per level: move a level up or down, select two or more parts and group them so they share one level, ungroup them again. Groups cannot nest, and a group moves as one block. The panel no longer exposes the renderer's layers — copper, silkscreen and pads are implementation details.
+- **Wires behave like objects.** Left-drag a wire to move the whole run; the middle button adds a bend and dragging it bends the wire; the middle button on a bend removes it. Double-click still adds a bend. Thin traces now win the hit test over the component behind them, and an end that is actually connected no longer shows the red "unconnected" dot.
+- **Your colour stays put.** New wires reuse the last colour you picked in that view; breadboard, schematic and PCB each remember their own, across restarts. Autorouting, pasting and undo never overwrite the memory.
+- **Settings are a file you can read.** Preferences moved to `config.toml`, with comments and unknown keys preserved when the app writes. An old `settings.json` is migrated once and kept as `settings.json.bak`; a damaged file falls back to the backup and says so.
+- **Shortcuts and mouse buttons are yours.** View ▸ Settings maps 16 actions and the middle/right/space-drag slots. Conflicts ask before replacing, each row resets on its own, and the whole section has a confirmed "restore defaults". Changes apply immediately and survive a restart.
+- **A first screen instead of a surprise.** Launching now asks whether to open a project or start a new one, with an offer to restore unsaved work. A new project is a single HUST EIC lesson breadboard with nothing plugged in.
+
+The project format is version 3 (parts gained an optional `group`); version 1 and 2 files still open, with no markup or groups.
+
 ## What's new in 0.5.2
 
 - **Chinese paragraphs wrap properly.** The text wrapper only broke lines at spaces, and Chinese has almost none, so it treated a whole sentence as one word: every line stopped early and left a ragged gap on the right. The About box and the part descriptions showed it worst. Lines now fill to the edge, and a comma or full stop never lands alone at the start of a line. English wraps exactly as before.

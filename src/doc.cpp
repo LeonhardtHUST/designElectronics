@@ -43,9 +43,11 @@ void Document::clear() {
     author.clear();
     notesText.clear();
     nextId = 1;
+    nextGroup = 1;
     parts.clear();
     wires.clear();
     notes.clear();
+    annos.clear();
     rules = DesignRules();
     touch();
 }
@@ -66,9 +68,128 @@ Note* Document::note(int id) {
     for (auto& n : notes) if (n.id == id) return &n;
     return nullptr;
 }
+Anno* Document::anno(int id) {
+    for (auto& a : annos) if (a.id == id) return &a;
+    return nullptr;
+}
+const Anno* Document::anno(int id) const {
+    for (auto& a : annos) if (a.id == id) return &a;
+    return nullptr;
+}
 int Document::partIndex(int id) const {
     for (size_t i = 0; i < parts.size(); i++) if (parts[i].id == id) return (int)i;
     return -1;
+}
+
+// ---------------------------------------------------------------------------
+// Hierarchy: levels are runs of neighbouring parts in `parts` (back to front).
+// A group id marks such a run; -partId marks a part on a level of its own.
+// ---------------------------------------------------------------------------
+
+int Document::levelKey(int partId) const {
+    const PartInst* p = part(partId);
+    if (!p) return 0;
+    return p->group > 0 ? p->group : -p->id;
+}
+
+std::vector<int> Document::groupMembers(int gid) const {
+    std::vector<int> out;
+    if (gid <= 0) return out;
+    for (auto& p : parts) if (p.group == gid) out.push_back(p.id);
+    return out;
+}
+
+// Moves the members of `gid` into one run at the place of its front-most member.
+static void makeGroupContiguous(std::vector<PartInst>& parts, int gid) {
+    int first = -1, last = -1, count = 0;
+    for (size_t i = 0; i < parts.size(); i++)
+        if (parts[i].group == gid) {
+            if (first < 0) first = (int)i;
+            last = (int)i;
+            count++;
+        }
+    if (first < 0 || last - first + 1 == count) return;  // already one run
+    std::vector<PartInst> block, rest;
+    size_t at = 0;
+    for (size_t i = 0; i < parts.size(); i++) {
+        if (parts[i].group == gid) block.push_back(parts[i]);
+        else {
+            if ((int)i < last) at++;
+            rest.push_back(parts[i]);
+        }
+    }
+    rest.insert(rest.begin() + (long)at, block.begin(), block.end());
+    parts.swap(rest);
+}
+
+bool Document::groupParts(const std::vector<int>& ids) {
+    std::vector<int> uniq;
+    for (int id : ids) if (std::find(uniq.begin(), uniq.end(), id) == uniq.end()) uniq.push_back(id);
+    if (uniq.size() < 2) return false;
+    for (int id : uniq) {
+        const PartInst* p = part(id);
+        if (!p || p->group > 0) return false;  // no nesting, no regrouping
+    }
+    int gid = newGroupId();
+    for (auto& p : parts) if (std::find(uniq.begin(), uniq.end(), p.id) != uniq.end()) p.group = gid;
+    makeGroupContiguous(parts, gid);
+    touch();
+    return true;
+}
+
+void Document::ungroup(int gid) {
+    if (gid <= 0) return;
+    bool any = false;
+    for (auto& p : parts) if (p.group == gid) { p.group = 0; any = true; }
+    if (any) touch();
+}
+
+bool Document::moveLevel(int partId, int dir) {
+    int i = partIndex(partId);
+    if (i < 0 || dir == 0) return false;
+    int gid = parts[(size_t)i].group;
+    int s = i, e = i + 1;
+    if (gid > 0) {
+        while (s > 0 && parts[(size_t)s - 1].group == gid) s--;
+        while (e < (int)parts.size() && parts[(size_t)e].group == gid) e++;
+    }
+    if (dir > 0) {
+        if (e >= (int)parts.size()) return false;
+        int e2 = e + 1;
+        int nextGid = parts[(size_t)e].group;
+        if (nextGid > 0) while (e2 < (int)parts.size() && parts[(size_t)e2].group == nextGid) e2++;
+        std::rotate(parts.begin() + s, parts.begin() + e, parts.begin() + e2);
+    } else {
+        if (s <= 0) return false;
+        int s2 = s - 1;
+        int prevGid = parts[(size_t)s2].group;
+        if (prevGid > 0) while (s2 > 0 && parts[(size_t)s2 - 1].group == prevGid) s2--;
+        std::rotate(parts.begin() + s2, parts.begin() + s, parts.begin() + e);
+    }
+    touch();
+    return true;
+}
+
+bool Document::canMoveLevel(int partId, int dir) const {
+    int i = partIndex(partId);
+    if (i < 0 || dir == 0) return false;
+    int gid = parts[(size_t)i].group;
+    if (dir > 0) {
+        int e = i + 1;
+        if (gid > 0) while (e < (int)parts.size() && parts[(size_t)e].group == gid) e++;
+        return e < (int)parts.size();
+    }
+    int s = i;
+    if (gid > 0) while (s > 0 && parts[(size_t)s - 1].group == gid) s--;
+    return s > 0;
+}
+
+void Document::normalizeGroups() {
+    std::map<int, int> count;
+    for (auto& p : parts) if (p.group > 0) count[p.group]++;
+    for (auto& p : parts) if (p.group > 0 && count[p.group] < 2) p.group = 0;
+    for (auto& kv : count) if (kv.second >= 2) makeGroupContiguous(parts, kv.first);
+    for (auto& p : parts) if (p.group > 0) nextGroup = std::max(nextGroup, p.group + 1);
 }
 
 std::string Document::nextLabel(const std::string& prefix) const {
@@ -102,6 +223,7 @@ void Document::removePart(int id) {
     for (auto& w : wires)
         for (auto& e : w.ends)
             if (e.part == id) e = WireEnd();
+    normalizeGroups();  // a group that lost a member may no longer be one
     touch();
 }
 
@@ -112,6 +234,11 @@ void Document::removeWire(int id) {
 
 void Document::removeNote(int id) {
     notes.erase(std::remove_if(notes.begin(), notes.end(), [&](const Note& n) { return n.id == id; }), notes.end());
+    touch();
+}
+
+void Document::removeAnno(int id) {
+    annos.erase(std::remove_if(annos.begin(), annos.end(), [&](const Anno& a) { return a.id == id; }), annos.end());
     touch();
 }
 
@@ -160,6 +287,7 @@ Json Document::toJson(bool full) const {
     rj.set("viaDrill", rules.viaDrill);
     j.set("rules", rj);
     j.set("nextId", nextId);
+    if (nextGroup > 1) j.set("nextGroup", nextGroup);
 
     Json parr = Json::array();
     for (auto& p : parts) {
@@ -182,6 +310,7 @@ Json Document::toJson(bool full) const {
         }
         o.set("views", views);
         if (p.locked) o.set("locked", true);
+        if (p.group > 0) o.set("group", p.group);
         if (!p.code.empty()) o.set("code", p.code);
         parr.push(o);
     }
@@ -228,6 +357,12 @@ Json Document::toJson(bool full) const {
         narr.push(o);
     }
     j.set("notes_", narr);
+
+    // Annotations are part of the design, so they are written by both the full and the
+    // compact form: undo snapshots and share links would otherwise lose the markup.
+    Json aarr = Json::array();
+    for (auto& a : annos) aarr.push(annoToJson(a));
+    j.set("annos", aarr);
 
     // Embed every part definition used so the file opens anywhere, offline,
     // even on an install that doesn't have these parts.
@@ -314,6 +449,7 @@ bool Document::fromJson(const Json& j, std::string* err) {
             if (kv.second["hidden"].boolean()) p.hidden |= 1u << v;
         }
         p.locked = o["locked"].boolean();
+        p.group = o["group"].i(0);
         p.code = o["code"].str();
         if (p.code.empty() && p.props.count("code")) { p.code = p.props["code"]; p.props.erase("code"); }
         maxId = std::max(maxId, p.id);
@@ -353,7 +489,19 @@ bool Document::fromJson(const Json& j, std::string* err) {
         maxId = std::max(maxId, n.id);
         d.notes.push_back(n);
     }
+    // Older files have no "annos": an empty list, not an error.
+    for (auto& o : j["annos"].items()) {
+        Anno a;
+        if (!annoFromJson(o, &a)) {
+            SDL_Log("Skipping annotation %d (kind '%s' is not supported)", o["id"].i(), o["kind"].str().c_str());
+            continue;
+        }
+        maxId = std::max(maxId, a.id);
+        d.annos.push_back(a);
+    }
     d.nextId = std::max(j["nextId"].i(1), maxId + 1);
+    d.nextGroup = j["nextGroup"].i(1);
+    d.normalizeGroups();  // hand-edited files: drop single-member groups, keep runs together
     d.syncWireEnds();
     d.revision = revision + 1;
     *this = std::move(d);

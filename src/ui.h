@@ -17,6 +17,7 @@ struct Input {
     bool released = false;   // went up this frame
     bool rightPressed = false;
     bool middleDown = false, rightDown = false;
+    bool middlePressed = false;  // middle button went down this frame
     bool doubleClick = false;
     float wheelX = 0, wheelY = 0;
     bool touch = false;      // last pointer event came from a touchscreen
@@ -35,7 +36,7 @@ struct Input {
     bool cmd() const { return (mods & (SDL_KMOD_CTRL | SDL_KMOD_GUI)) != 0; }
     bool shift() const { return (mods & SDL_KMOD_SHIFT) != 0; }
     void endFrame() {
-        pressed = released = rightPressed = doubleClick = false;
+        pressed = released = rightPressed = doubleClick = middlePressed = false;
         wheelX = wheelY = 0;
         wheelPrecise = false;
         text.clear();
@@ -118,8 +119,12 @@ public:
 
     // Is the pointer free for this widget (not blocked by a popup/dialog/capture)?
     bool interactive(Rect r) const;
-    bool hovered(Rect r) const { return interactive(r) && r.contains(in->mouse); }
+    // The single rect-hit test every widget uses. While a dialog is up nothing behind
+    // it is hot, even for the code paths that read the pointer directly.
+    bool hotRect(Rect r) const;
+    bool hovered(Rect r) const { return hotRect(r); }
     bool blocking() const { return !menus_.empty() || !dialogs_.empty() || (!sheets_.empty() && !inSheet_); }
+    bool hasDialog() const { return !dialogs_.empty(); }
     bool overBlocking(Vec2 p) const;
     bool editingText() const { return focus_ != 0; }
 
@@ -170,6 +175,7 @@ private:
     struct Sheet { std::string id, title; float w, h; std::function<void(Rect)> draw; };
     std::vector<Sheet> sheets_;
     bool inSheet_ = false;
+    bool inDialogs_ = false;  // true while drawDialogs() draws: the dialog's own widgets work
     void drawSheet();
     std::vector<Menu> menus_;
     std::vector<Dialog> dialogs_;

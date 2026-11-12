@@ -194,7 +194,7 @@ void App::ensureAgentBridge() {
     };
     st.session->onReplaced = [this]() {
         for (auto& c : cam) c.valid = false;
-        selParts.clear(); selWires.clear(); selNotes.clear();
+        selParts.clear(); selWires.clear(); selNotes.clear(); selAnnos.clear();
         codeOpen = false;
     };
     std::random_device rd;

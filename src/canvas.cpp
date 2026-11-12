@@ -21,6 +21,8 @@ Rect worldExtent(const Document& doc, int v, bool* any) {
     for (auto& p : doc.parts) if (p.inView(v)) add(p.worldBounds(v));
     for (auto& w : doc.wires) if (w.view == v) for (auto& pt : w.pts) add(Rect(pt.x, pt.y, 0, 0));
     for (auto& n : doc.notes) if (n.view == v) add(Rect(n.pos.x, n.pos.y, n.size.x, n.size.y));
+    // Markup counts as content: fitting the view must not clip an annotation away.
+    for (auto& a : doc.annos) if (a.view == v && !a.hidden) add(annoBounds(a));
     return b;
 }
 }  // namespace
@@ -88,85 +90,297 @@ bool App::pinAt(Vec2 s, int& part, int& pin, int exPart, int exPin) {
     return part >= 0;
 }
 
-Hit App::hitTest(Vec2 s) {
-    Hit h;
-    Vec2 w = toWorld(s);
-    float z = cam[view].zoom;
-    float tol = (in.touch ? 14.f : 7.f) * ui.s / z;
-    // wire ends and bend points
-    for (int i = (int)doc.wires.size() - 1; i >= 0; i--) {
-        const Wire& wr = doc.wires[(size_t)i];
+float App::hitRadius(int v, float visualHalfWorld) const {
+    // A thin line has to stay grabbable when the view is zoomed out, and a thick
+    // trace should be grabbable across its whole width. The radius follows the drawn
+    // width but stays close to the pixel minimum, so a wide cable never swallows the
+    // part drawn next to it. Copper is real, so on the PCB the width counts.
+    float z = std::max(cam[v].zoom, 1e-6f);
+    float minPx = (in.touch ? 14.f : 6.f) * ui.s;
+    float capPx = minPx * (v == PCB ? 8.f : 1.3f);
+    return std::clamp(visualHalfWorld * z, minPx, capPx) / z;
+}
+
+float App::wireJoinTol(int v) const {
+    // Half a grid step of the view: two wire points closer than this are one node.
+    return v == PCB ? 4.f : v == SCH ? 6.f : 10.f;
+}
+
+// Collects everything under the pointer instead of returning the first match.
+//
+// The old order (pins before wire segments) let a part swallow every wire crossing
+// it: the pin radius is a comfortable 35 mils, the wire only a few pixels. Each
+// candidate now carries the layer it belongs to and how far it is from the pointer
+// on screen, so a wire crossing a part wins in the middle of the wire and the part
+// wins everywhere else.
+//
+// Priorities (small wins): 0 selection handle, 1 wire end, 2 wire bend, 3 wire
+// segment, 4 pin, 5 part body, 6 annotation or note, 7 ratsnest line.
+void App::collectHits(Vec2 s, std::vector<HitCand>& out) {
+    out.clear();
+    const Vec2 w = toWorld(s);
+    const float z = std::max(cam[view].zoom, 1e-6f);
+    auto push = [&out](const Hit& h, int prio, float dPx) {
+        HitCand c;
+        c.h = h;
+        c.prio = prio;
+        c.d = dPx;
+        out.push_back(c);
+    };
+
+    // 0 — handles of the current selection: note corner, annotation resize point
+    if (layerShown(view, LY_NOTES)) {
+        for (auto& n : doc.notes) {
+            if (n.view != view) continue;
+            Vec2 corner = n.pos + n.size;
+            float tol = hitRadius(view, 0) * 1.5f;
+            if (dist(corner, w) <= tol) {
+                Hit h;
+                h.kind = Hit::NOTE_CORNER;
+                h.note = n.id;
+                push(h, 0, dist(corner, w) * z);
+            }
+        }
+    }
+    if (layerShown(view, LY_ANNO)) {
+        for (auto& a : doc.annos) {
+            if (a.view != view || a.hidden) continue;
+            if (!selAnnos.count(a.id)) continue;  // grab the shape first, then its handles
+            int idx = -1;
+            float tol = hitRadius(view, 0) * 1.2f;
+            if (annoHitHandle(a, w, tol, &idx)) {
+                Hit h;
+                h.kind = Hit::ANNO_HANDLE;
+                h.anno = a.id;
+                h.index = idx;
+                push(h, 0, dist(annoHandleAt(a, idx), w) * z);
+            }
+        }
+    }
+
+    // 1..3 — wires: ends, bend points, segments
+    for (auto& wr : doc.wires) {
         if (wr.view != view || !wireShown(wr)) continue;
-        float r = std::max(tol, view == PCB ? wr.width / 2 : 18.f);
+        float endR = hitRadius(view, view == PCB ? wr.width / 2 : 18.f);
         for (int e = 0; e < 2; e++) {
-            Vec2 p = e == 0 ? wr.pts.front() : wr.pts.back();
-            if (dist(p, w) <= r) {
-                // an end sitting on a pin: only grab it if the wire is selected or the end is free
-                bool attached = wr.ends[e].attached();
-                if (!attached || selWires.count(wr.id)) { h.kind = Hit::WIRE_END; h.wire = wr.id; h.index = e; return h; }
-            }
+            Vec2 pt = e == 0 ? wr.pts.front() : wr.pts.back();
+            float d = dist(pt, w);
+            if (d > endR) continue;
+            // An end sitting on a pin is only grabbable when the wire is selected,
+            // otherwise pressing there means "use this pin".
+            if (wr.ends[e].attached() && !selWires.count(wr.id)) continue;
+            Hit h;
+            h.kind = Hit::WIRE_END;
+            h.wire = wr.id;
+            h.index = e;
+            push(h, 1, d * z);
         }
-        for (size_t k = 1; k + 1 < wr.pts.size(); k++)
-            if (dist(wr.pts[k], w) <= r) { h.kind = Hit::WIRE_BEND; h.wire = wr.id; h.index = (int)k; return h; }
+        for (size_t k = 1; k + 1 < wr.pts.size(); k++) {
+            float d = dist(wr.pts[k], w);
+            if (d > endR) continue;
+            Hit h;
+            h.kind = Hit::WIRE_BEND;
+            h.wire = wr.id;
+            h.index = (int)k;
+            push(h, 2, d * z);
+        }
+        float segR = hitRadius(view, (view == PCB ? wr.width : view == BB ? 30.f : 12.f) / 2);
+        for (size_t k = 0; k + 1 < wr.pts.size(); k++) {
+            float d = distPointSeg(w, wr.pts[k], wr.pts[k + 1]);
+            if (d > segR) continue;
+            Hit h;
+            h.kind = Hit::WIRE_SEG;
+            h.wire = wr.id;
+            h.index = (int)k;
+            push(h, 3, d * z);
+        }
     }
-    int part, pin;
+
+    // 4 — pins (pinAt is left exactly as it was: snapping must not get pickier)
+    int part = -1, pin = -1;
     if (pinAt(s, part, pin, -1, -1)) {
-        // a free wire end on this pin? prefer the wire end so it can be moved
-        for (auto& wr : doc.wires) {
-            if (wr.view != view) continue;
-            for (int e = 0; e < 2; e++)
-                if (wr.ends[e].part == part && wr.ends[e].pin == pin && selWires.count(wr.id)) { h.kind = Hit::WIRE_END; h.wire = wr.id; h.index = e; return h; }
-        }
-        // On touch the enlarged pin radius covers most of a small part, so a drag would always start a
-        // wire. Inside a part's body: a selected part moves; otherwise only a press right on a pin wires.
-        if (in.touch) {
-            for (int i = (int)doc.parts.size() - 1; i >= 0; i--) {
-                const PartInst& p = doc.parts[(size_t)i];
-                if (!partShown(p, view) || p.def->isBreadboard || p.def->isBoard || !p.worldBounds(view).contains(w)) continue;
-                bool onPin = part == p.id && dist(p.pinPos(pin, view), w) <= std::max(pinRadius(p, pin, view), 6 * ui.s / z);
-                if (selParts.count(p.id) || !onPin) { h.kind = Hit::PART; h.part = p.id; return h; }
-                break;
+        const PartInst* p = doc.part(part);
+        if (p) {
+            bool onPin = dist(p->pinPos(pin, view), w) <= std::max(pinRadius(*p, pin, view), hitRadius(view, 0));
+            // On touch the enlarged pin radius covers most of a small part, so a drag
+            // there would always start a wire: inside the body, the part is meant.
+            if (in.touch && !p->def->isBreadboard && !p->def->isBoard && p->worldBounds(view).contains(w) &&
+                (selParts.count(p->id) || !onPin)) {
+                Hit h;
+                h.kind = Hit::PART;
+                h.part = p->id;
+                push(h, 5, 0.f);
+            } else {
+                Hit h;
+                h.kind = Hit::PIN;
+                h.part = part;
+                h.pin = pin;
+                push(h, 4, dist(p->pinPos(pin, view), w) * z);
             }
         }
-        h.kind = Hit::PIN; h.part = part; h.pin = pin;
-        return h;
     }
-    for (int i = (int)doc.wires.size() - 1; i >= 0; i--) {
-        const Wire& wr = doc.wires[(size_t)i];
-        if (wr.view != view || !wireShown(wr)) continue;
-        float r = std::max(tol * 0.8f, (view == PCB ? wr.width : view == BB ? 30.f : 12.f) / 2);
-        for (size_t k = 0; k + 1 < wr.pts.size(); k++)
-            if (distPointSeg(w, wr.pts[k], wr.pts[k + 1]) <= r) { h.kind = Hit::WIRE_SEG; h.wire = wr.id; h.index = (int)k; return h; }
+
+    // 5 — part bodies, front-most first so equal distances keep the drawn order
+    for (int i = (int)doc.parts.size() - 1; i >= 0; i--) {
+        const PartInst& p = doc.parts[(size_t)i];
+        if (!partShown(p, view)) continue;
+        if (!p.worldBounds(view).contains(w)) continue;
+        Hit h;
+        h.kind = Hit::PART;
+        h.part = p.id;
+        push(h, 5, 0.f);
     }
-    for (int pass = 0; pass < 2; pass++) {
-        if (pass == 1 && layerShown(view, LY_NOTES)) {
-            for (int i = (int)doc.notes.size() - 1; i >= 0; i--) {
-                const Note& n = doc.notes[(size_t)i];
-                if (n.view != view) continue;
-                Vec2 corner = n.pos + n.size;
-                if (dist(corner, w) <= tol * 1.5f) { h.kind = Hit::NOTE_CORNER; h.note = n.id; return h; }
-                if (Rect(n.pos.x, n.pos.y, n.size.x, n.size.y).contains(w)) { h.kind = Hit::NOTE; h.note = n.id; return h; }
-            }
-        }
-        for (int i = (int)doc.parts.size() - 1; i >= 0; i--) {
-            const PartInst& p = doc.parts[(size_t)i];
-            if (!partShown(p, view)) continue;
-            bool background = p.def->isBreadboard || p.def->isBoard;
-            if (background != (pass == 1)) continue;
-            if (p.worldBounds(view).contains(w)) { h.kind = Hit::PART; h.part = p.id; return h; }
+
+    // 6 — notes and annotations (markup under the parts, and under their clicks too)
+    if (layerShown(view, LY_NOTES)) {
+        for (int i = (int)doc.notes.size() - 1; i >= 0; i--) {
+            const Note& n = doc.notes[(size_t)i];
+            if (n.view != view) continue;
+            if (!Rect(n.pos.x, n.pos.y, n.size.x, n.size.y).contains(w)) continue;
+            Hit h;
+            h.kind = Hit::NOTE;
+            h.note = n.id;
+            push(h, 6, 0.f);
         }
     }
+    if (layerShown(view, LY_ANNO)) {
+        for (int i = (int)doc.annos.size() - 1; i >= 0; i--) {
+            const Anno& a = doc.annos[(size_t)i];
+            if (a.view != view || a.hidden) continue;
+            float tol = hitRadius(view, 0);
+            if (!annoHitTest(a, w, tol)) continue;
+            float d = 0;
+            if (a.kind == AnnoKind::Line) d = distPointSeg(w, a.a, a.b);
+            else if (a.kind == AnnoKind::Circle) d = std::fabs(dist(w, a.a) - dist(a.a, a.b));
+            Hit h;
+            h.kind = Hit::ANNO;
+            h.anno = a.id;
+            push(h, 6, d * z);
+        }
+    }
+
+    // 7 — ratsnest lines
     if (showRatsnest && layerShown(view, LY_RATSNEST)) {
         for (auto& r : conn.ratsnest(doc, view)) {
-            if (distPointSeg(w, r.a, r.b) <= tol) { h.kind = Hit::RATSNEST; h.rat = r; return h; }
+            float d = distPointSeg(w, r.a, r.b);
+            if (d > hitRadius(view, 0)) continue;
+            Hit h;
+            h.kind = Hit::RATSNEST;
+            h.rat = r;
+            push(h, 7, d * z);
         }
     }
-    return h;
+}
+
+Hit App::hitTest(Vec2 s) {
+    std::vector<HitCand> cands;
+    collectHits(s, cands);
+    const HitCand* best = nullptr;
+    for (auto& c : cands) {
+        if (!best || c.prio < best->prio || (c.prio == best->prio && c.d < best->d - 0.01f)) best = &c;
+    }
+    return best ? best->h : Hit();
 }
 
 // ---------------------------------------------------------------------------
 // Interaction
 // ---------------------------------------------------------------------------
+
+// A wire end is connected when any of these holds: it is being dragged onto a pin
+// right now, it is attached and still sits on that pin, or it touches another wire
+// of the same view. Structure alone is not enough — ends[] is only written when the
+// drag finishes, so a mid-drag frame would always show a red dot on a snapped end.
+bool App::wireEndConnected(const Wire& w, int end) const {
+    if (end < 0 || end > 1 || w.pts.size() < 2) return false;
+    Vec2 p = end == 0 ? w.pts.front() : w.pts.back();
+    if ((drag == DRAG_WIRE_NEW || drag == DRAG_WIRE_END) && dragWire == w.id && dragWireEnd == end && wireTargetPart >= 0) return true;
+    const WireEnd& e = w.ends[end];
+    if (e.attached()) {
+        const PartInst* part = doc.part(e.part);
+        if (part && part->def && e.pin >= 0 && e.pin < (int)part->def->pins.size() && part->inView(w.view) &&
+            dist(p, part->pinPos(e.pin, w.view)) <= 1e-2f)
+            return true;
+    }
+    float tol = wireJoinTol(w.view);
+    return wireProximity(w.view, tol).touches(p, w.id, tol);
+}
+
+// Built once per frame (or after any change), not per wire: the old full scan made
+// drawing a design with hundreds of wires quadratic.
+const WireGrid& App::wireProximity(int v, float tol) const {
+    if (wireGridRev != doc.revision || wireGridView != v || wireGridDrag != (int)drag || wireGridDragWire != dragWire ||
+        wireGridDragEnd != dragWireEnd || wireGridTarget != wireTargetPart) {
+        wireGridCache.clear(std::max(200.f, tol * 8.f));
+        for (auto& w : doc.wires) {
+            if (w.view != v || w.pts.size() < 2) continue;
+            wireGridCache.addEnd(w.pts.front(), w.id);
+            wireGridCache.addEnd(w.pts.back(), w.id);
+            for (size_t k = 0; k + 1 < w.pts.size(); k++) wireGridCache.addSeg(w.pts[k], w.pts[k + 1], w.id);
+        }
+        wireGridRev = doc.revision;
+        wireGridView = v;
+        wireGridDrag = (int)drag;
+        wireGridDragWire = dragWire;
+        wireGridDragEnd = dragWireEnd;
+        wireGridTarget = wireTargetPart;
+    }
+    return wireGridCache;
+}
+
+// The one place that adds a bend point, used by the middle button and by the
+// AddBend action. One checkpoint per bend.
+bool App::insertBendAt(const Hit& h, Vec2 world) {
+    Wire* wr = doc.wire(h.wire);
+    if (!wr || h.index < 0 || h.index + 1 >= (int)wr->pts.size()) return false;
+    Vec2 at = closestOnSeg(world, wr->pts[(size_t)h.index], wr->pts[(size_t)h.index + 1]);
+    if (snapToGrid) at = snapv(at, gridSize(view) / 2);
+    // A bend on top of an existing point would be invisible and unclickable.
+    float tol = wireJoinTol(view);
+    for (auto& pt : wr->pts)
+        if (dist(pt, at) <= tol) return false;
+    checkpoint();
+    wr->pts.insert(wr->pts.begin() + h.index + 1, at);
+    wr->tidy = false;
+    dragWire = wr->id;
+    dragBend = h.index + 1;
+    selWires = {wr->id};
+    selParts.clear(); selNotes.clear(); selAnnos.clear();
+    changed();
+    return true;
+}
+
+// What a pointer does. Auto keeps the built-in behaviour of that button, so the
+// settings sheet replaces an Auto with an explicit role instead of adding a second
+// code path. A bound AddBend turns the middle button into a plain pan: bends then
+// come from the keyboard, and the two must not compete for the same press.
+MouseRole App::mouseRoleFor(int slot) const {
+    MouseRole r = binds.mouse[slot < 0 || slot >= kMouseSlots ? 0 : slot];
+    if (r == MouseRole::Auto && slot == SLOT_MIDDLE && binds.chord[(int)Action::AddBend].bound()) return MouseRole::Pan;
+    return r;
+}
+
+bool App::middleButtonPress(Vec2 s) {
+    pressWorld = toWorld(s);
+    Hit h = hitTest(s);
+    if (h.kind == Hit::WIRE_SEG) {
+        if (!insertBendAt(h, pressWorld)) return true;
+        drag = DRAG_WIRE_BEND;
+        return false;
+    }
+    if (h.kind == Hit::WIRE_BEND) {
+        Wire* wr = doc.wire(h.wire);
+        // A wire always keeps its two ends, so the last bend point stays.
+        if (wr && wr->pts.size() > 2 && h.index > 0 && h.index + 1 < (int)wr->pts.size()) {
+            checkpoint();
+            wr->pts.erase(wr->pts.begin() + h.index);
+            wr->tidy = false;
+            changed();
+        }
+        drag = DRAG_NONE;
+        return false;
+    }
+    return true;  // empty canvas (or anything else): pan
+}
 
 void App::startDrag() {
     if (readOnly) { drag = DRAG_PAN; return; }  // viewers can only pan
@@ -184,11 +398,11 @@ void App::startDrag() {
             wr.ends[0] = {pressHit.part, pressHit.pin};
             wr.layer = activeLayer;
             wr.width = doc.rules.traceWidth;
-            if (view == BB) wr.color = rgba(65, 140, 225);
+            wr.color = wireColorMem[view];  // the last colour the user picked
             doc.wires.push_back(wr);
             dragWire = wr.id;
             dragWireEnd = 1;
-            selParts.clear(); selNotes.clear();
+            selParts.clear(); selNotes.clear(); selAnnos.clear();
             selWires = {wr.id};
             drag = DRAG_WIRE_NEW;
             changed();
@@ -210,27 +424,39 @@ void App::startDrag() {
             drag = DRAG_WIRE_BEND;
             break;
         case Hit::WIRE_SEG: {
+            // Dragging a segment moves the whole wire: inserting a bend point here made
+            // a plain click on a wire change its shape. Bends are added with the middle
+            // button (or a double-click) instead.
             Wire* wr = doc.wire(pressHit.wire);
             if (!wr) { drag = DRAG_NONE; return; }
+            if (!selWires.count(wr->id)) {
+                if (in.shift()) {
+                    selWires.insert(wr->id);
+                } else {
+                    selWires = {wr->id};
+                    selParts.clear(); selNotes.clear(); selAnnos.clear();
+                }
+            }
             beginEdit();
-            Vec2 at = closestOnSeg(pressWorld, wr->pts[(size_t)pressHit.index], wr->pts[(size_t)pressHit.index + 1]);
-            wr->pts.insert(wr->pts.begin() + pressHit.index + 1, at);
-            dragWire = wr->id;
-            dragBend = pressHit.index + 1;
-            selWires = {wr->id};
-            selParts.clear(); selNotes.clear();
-            drag = DRAG_WIRE_BEND;
-            changed();
+            moveStart.clear();
+            moveWireStart.clear();
+            moveNoteStart.clear();
+            moveAnnoStart.clear();
+            for (int id : selWires)
+                if (Wire* w2 = doc.wire(id))
+                    if (w2->view == view) moveWireStart[id] = w2->pts;
+            anchorPart = -1;
+            drag = DRAG_MOVE;
             break;
         }
         case Hit::PART:
         case Hit::NOTE: {
             if (pressHit.kind == Hit::PART && !selParts.count(pressHit.part)) {
-                if (!in.shift()) { selParts.clear(); selWires.clear(); selNotes.clear(); }
+                if (!in.shift()) { selParts.clear(); selWires.clear(); selNotes.clear(); selAnnos.clear(); }
                 selParts.insert(pressHit.part);
             }
             if (pressHit.kind == Hit::NOTE && !selNotes.count(pressHit.note)) {
-                if (!in.shift()) { selParts.clear(); selWires.clear(); selNotes.clear(); }
+                if (!in.shift()) { selParts.clear(); selWires.clear(); selNotes.clear(); selAnnos.clear(); }
                 selNotes.insert(pressHit.note);
             }
             beginEdit();
@@ -271,12 +497,28 @@ void App::startDrag() {
             selNotes = {pressHit.note};
             drag = DRAG_NOTE_RESIZE;
             break;
+        case Hit::ANNO:
+        case Hit::ANNO_HANDLE: {
+            Anno* a = doc.anno(pressHit.anno);
+            if (!a) { drag = DRAG_NONE; return; }
+            if (!selAnnos.count(a->id)) {
+                if (!in.shift()) { selParts.clear(); selWires.clear(); selNotes.clear(); selAnnos.clear(); }
+                selAnnos.insert(a->id);
+            }
+            beginEdit();
+            dragAnno = a->id;
+            dragAnnoHandle = pressHit.kind == Hit::ANNO_HANDLE ? std::max(0, pressHit.index) : -1;
+            moveAnnoStart.clear();
+            for (int id : selAnnos) if (const Anno* s = doc.anno(id)) moveAnnoStart[id] = {s->a, s->b};
+            drag = DRAG_ANNO;
+            break;
+        }
         default:
             if (in.touch) drag = DRAG_PAN;
             else {
                 drag = DRAG_RUBBER;
                 rubberA = rubberB = pressWorld;
-                if (!in.shift()) { selParts.clear(); selWires.clear(); selNotes.clear(); }
+                if (!in.shift()) { selParts.clear(); selWires.clear(); selNotes.clear(); selAnnos.clear(); }
             }
             break;
     }
@@ -291,12 +533,12 @@ void App::finishPointer() {
             if (readOnly) {  // clicks only select (and show) parts
                 if (h.kind == Hit::PART || h.kind == Hit::PIN) selParts = {h.part};
                 else selParts.clear();
-                selWires.clear(); selNotes.clear();
+                selWires.clear(); selNotes.clear(); selAnnos.clear();
                 break;
             }
             if (h.kind == Hit::PART || h.kind == Hit::PIN) {
                 if (add) { if (!selParts.erase(h.part)) selParts.insert(h.part); }
-                else { selParts = {h.part}; selWires.clear(); selNotes.clear(); }
+                else { selParts = {h.part}; selWires.clear(); selNotes.clear(); selAnnos.clear(); }
                 if (in.doubleClick && compact) drawerInspector = true;
             } else if (h.kind == Hit::WIRE_SEG || h.kind == Hit::WIRE_END || h.kind == Hit::WIRE_BEND) {
                 Wire* wr = doc.wire(h.wire);
@@ -312,10 +554,14 @@ void App::finishPointer() {
                     changed();
                 }
                 if (add) { if (!selWires.erase(h.wire)) selWires.insert(h.wire); }
-                else { selWires = {h.wire}; selParts.clear(); selNotes.clear(); }
+                else { selWires = {h.wire}; selParts.clear(); selNotes.clear(); selAnnos.clear(); }
             } else if (h.kind == Hit::NOTE || h.kind == Hit::NOTE_CORNER) {
                 selNotes = {h.note};
-                selParts.clear(); selWires.clear();
+                selParts.clear(); selWires.clear(); selAnnos.clear();
+                if (in.doubleClick) drawerInspector = compact;
+            } else if (h.kind == Hit::ANNO || h.kind == Hit::ANNO_HANDLE) {
+                if (add) { if (!selAnnos.erase(h.anno)) selAnnos.insert(h.anno); }
+                else { selAnnos = {h.anno}; selParts.clear(); selWires.clear(); selNotes.clear(); }
                 if (in.doubleClick) drawerInspector = compact;
             } else if (h.kind == Hit::RATSNEST) {
                 checkpoint();
@@ -330,10 +576,10 @@ void App::finishPointer() {
                 doc.wires.push_back(wr);
                 if (autoTidy) tidyWire(doc, wr.id);
                 selWires = {wr.id};
-                selParts.clear(); selNotes.clear();
+                selParts.clear(); selNotes.clear(); selAnnos.clear();
                 changed();
             } else if (!add) {
-                selParts.clear(); selWires.clear(); selNotes.clear();
+                selParts.clear(); selWires.clear(); selNotes.clear(); selAnnos.clear();
             }
             break;
         }
@@ -370,6 +616,13 @@ void App::finishPointer() {
             changed();
             endEdit();
             break;
+        case DRAG_ANNO:
+            changed();
+            endEdit();
+            dragAnno = -1;
+            dragAnnoHandle = -1;
+            moveAnnoStart.clear();
+            break;
         case DRAG_RUBBER: {
             Rect r = Rect::fromPoints(rubberA, rubberB);
             for (auto& p : doc.parts) if (partShown(p, view) && !p.locked && r.overlaps(p.worldBounds(view)) && !(p.def->isBreadboard && !Rect(r).contains(p.worldBounds(view).center()) && r.w < p.worldBounds(view).w)) selParts.insert(p.id);
@@ -378,6 +631,7 @@ void App::finishPointer() {
                 for (auto& pt : wr.pts) if (r.contains(pt)) { selWires.insert(wr.id); break; }
             }
             for (auto& n : doc.notes) if (n.view == view && layerShown(view, LY_NOTES) && r.overlaps(Rect(n.pos.x, n.pos.y, n.size.x, n.size.y))) selNotes.insert(n.id);
+            for (auto& a : doc.annos) if (a.view == view && !a.hidden && layerShown(view, LY_ANNO) && r.overlaps(annoBounds(a))) selAnnos.insert(a.id);
             break;
         }
         default:
@@ -412,20 +666,98 @@ void App::canvasInput() {
         if (in.cmd() || !in.wheelPrecise) zoomAt(std::pow(1.18f, in.wheelY), m);
         else c.pan += Vec2(-in.wheelX, in.wheelY) * 22 * s;
     }
-    // middle-button pan
-    if (in.middleDown && !prevMiddle && overCanvas) { drag = DRAG_PAN; canvasOwnsPointer = true; lastMouse = m; }
-    if (!in.middleDown && prevMiddle && drag == DRAG_PAN && !in.down) { drag = DRAG_NONE; canvasOwnsPointer = false; }
-    prevMiddle = in.middleDown;
+    // Middle button: by default a bend point on a wire segment, no bend on a bend
+    // point, otherwise pan. Settings ▸ Mouse can replace that with a single role.
+    MouseRole middle = mouseRoleFor(SLOT_MIDDLE);
+    if (in.middlePressed && overCanvas && !ui.blocking() && drag == DRAG_NONE) {
+        canvasOwnsPointer = true;
+        middleDrag = true;
+        lastMouse = m;
+        Hit mh = hitTest(m);
+        switch (readOnly ? MouseRole::Pan : middle) {
+            case MouseRole::AddBend:
+                if (mh.kind == Hit::WIRE_SEG) insertBendAt(mh, toWorld(m));
+                canvasOwnsPointer = false;
+                middleDrag = false;
+                break;
+            case MouseRole::ContextMenu:
+                canvasOwnsPointer = false;
+                middleDrag = false;
+                ui.openMenu(Rect(m.x, m.y, 0, 0), contextMenu(mh));
+                break;
+            case MouseRole::RubberBand:
+                selParts.clear(); selWires.clear(); selNotes.clear(); selAnnos.clear();
+                drag = DRAG_RUBBER;
+                rubberA = rubberB = toWorld(m);
+                break;
+            case MouseRole::None:
+                canvasOwnsPointer = false;
+                middleDrag = false;
+                break;
+            case MouseRole::Pan:
+                drag = DRAG_PAN;
+                break;
+            case MouseRole::Auto:
+                if (middleButtonPress(m)) drag = DRAG_PAN;
+                else if (drag == DRAG_NONE) {
+                    canvasOwnsPointer = false;
+                    middleDrag = false;
+                }
+                break;
+        }
+    }
+    if (middleDrag && !in.middleDown) {
+        if (drag == DRAG_WIRE_BEND) finishPointer();  // commit the drag into one undo step
+        else drag = DRAG_NONE;
+        middleDrag = false;
+        canvasOwnsPointer = false;
+    }
+    // A right-button pan ends when the right button comes up.
+    if (drag == DRAG_PAN && !middleDrag && !in.down && !in.rightDown)
+        drag = DRAG_NONE, canvasOwnsPointer = false;
+
+    // A drawing tool owns the pointer: it decides before anything can be selected.
+    if (annoToolActive() && !ui.blocking() && drag != DRAG_PAN) {
+        if (annoToolInput()) return;
+    }
 
     hover = Hit();
     if (drag == DRAG_NONE && overCanvas && !in.touch && !ui.blocking()) hover = hitTest(m);
 
-    // right-click context menu
+    // Right button: the context menu by default, or whatever role the user picked.
     if (in.rightPressed && overCanvas && !ui.blocking() && drag == DRAG_NONE && !readOnly) {
         Hit h = hitTest(m);
-        if ((h.kind == Hit::PART || h.kind == Hit::PIN) && !selParts.count(h.part)) { selParts = {h.part}; selWires.clear(); selNotes.clear(); }
-        if ((h.kind == Hit::WIRE_SEG || h.kind == Hit::WIRE_BEND || h.kind == Hit::WIRE_END) && !selWires.count(h.wire)) { selWires = {h.wire}; selParts.clear(); selNotes.clear(); }
-        if (h.kind == Hit::NOTE) { selNotes = {h.note}; selParts.clear(); selWires.clear(); }
+        switch (mouseRoleFor(SLOT_RIGHT)) {
+            case MouseRole::Pan:
+                canvasOwnsPointer = true;
+                lastMouse = m;
+                drag = DRAG_PAN;
+                in.rightPressed = false;  // consumed: no menu
+                break;
+            case MouseRole::RubberBand:
+                selParts.clear(); selWires.clear(); selNotes.clear(); selAnnos.clear();
+                drag = DRAG_RUBBER;
+                rubberA = rubberB = toWorld(m);
+                in.rightPressed = false;
+                break;
+            case MouseRole::AddBend:
+                if (h.kind == Hit::WIRE_SEG) insertBendAt(h, toWorld(m));
+                in.rightPressed = false;
+                break;
+            case MouseRole::None:
+                in.rightPressed = false;
+                break;
+            case MouseRole::Auto:
+            case MouseRole::ContextMenu:
+                break;  // falls through to the menu below
+        }
+    }
+    if (in.rightPressed && overCanvas && !ui.blocking() && drag == DRAG_NONE && !readOnly) {
+        Hit h = hitTest(m);
+        if ((h.kind == Hit::PART || h.kind == Hit::PIN) && !selParts.count(h.part)) { selParts = {h.part}; selWires.clear(); selNotes.clear(); selAnnos.clear(); }
+        if ((h.kind == Hit::WIRE_SEG || h.kind == Hit::WIRE_BEND || h.kind == Hit::WIRE_END) && !selWires.count(h.wire)) { selWires = {h.wire}; selParts.clear(); selNotes.clear(); selAnnos.clear(); }
+        if (h.kind == Hit::NOTE) { selNotes = {h.note}; selParts.clear(); selWires.clear(); selAnnos.clear(); }
+        if (h.kind == Hit::ANNO || h.kind == Hit::ANNO_HANDLE) { selAnnos = {h.anno}; selParts.clear(); selWires.clear(); selNotes.clear(); }
         ui.openMenu(Rect(m.x, m.y, 0, 0), contextMenu(h));
     }
 
@@ -436,7 +768,32 @@ void App::canvasInput() {
         pressHit = hitTest(m);
         lastMouse = m;
         longPressFired = false;
-        drag = spaceDown ? DRAG_PAN : DRAG_PENDING;
+        if (!spaceDown) {
+            drag = DRAG_PENDING;
+        } else {
+            switch (mouseRoleFor(SLOT_SPACE_LEFT)) {
+                case MouseRole::AddBend:
+                    if (pressHit.kind == Hit::WIRE_SEG) insertBendAt(pressHit, pressWorld);
+                    drag = DRAG_NONE;
+                    break;
+                case MouseRole::RubberBand:
+                    drag = DRAG_RUBBER;
+                    rubberA = rubberB = toWorld(m);
+                    break;
+                case MouseRole::ContextMenu:
+                    ui.openMenu(Rect(m.x, m.y, 0, 0), contextMenu(pressHit));
+                    drag = DRAG_NONE;
+                    break;
+                case MouseRole::None:
+                    drag = DRAG_NONE;
+                    break;
+                case MouseRole::Auto:
+                case MouseRole::Pan:
+                default:
+                    drag = DRAG_PAN;  // what space + drag has always done
+                    break;
+            }
+        }
         if (simOn && (pressHit.kind == Hit::PART || pressHit.kind == Hit::PIN)) {
             PartInst* p = doc.part(pressHit.part);
             if (p && p->def->sim == "pushbutton") { simPressed.insert(p->id); drag = DRAG_NONE; }
@@ -447,15 +804,15 @@ void App::canvasInput() {
         }
     }
 
-    if (canvasOwnsPointer && (in.down || in.middleDown)) {
+    if (canvasOwnsPointer && (in.down || in.middleDown || in.rightDown)) {
         Vec2 w = toWorld(m);
         float moved = dist(m, in.pressPos);
         if (drag == DRAG_PENDING) {
             if (in.touch && moved < 12 * s && SDL_GetTicks() - in.pressTime > 550 && !longPressFired && !readOnly) {
                 longPressFired = true;
                 Hit h = pressHit;
-                if ((h.kind == Hit::PART || h.kind == Hit::PIN) && !selParts.count(h.part)) { selParts = {h.part}; selWires.clear(); selNotes.clear(); }
-                if (h.kind == Hit::WIRE_SEG && !selWires.count(h.wire)) { selWires = {h.wire}; selParts.clear(); selNotes.clear(); }
+                if ((h.kind == Hit::PART || h.kind == Hit::PIN) && !selParts.count(h.part)) { selParts = {h.part}; selWires.clear(); selNotes.clear(); selAnnos.clear(); }
+                if (h.kind == Hit::WIRE_SEG && !selWires.count(h.wire)) { selWires = {h.wire}; selParts.clear(); selNotes.clear(); selAnnos.clear(); }
                 ui.openMenu(Rect(m.x, m.y, 0, 0), contextMenu(h));
                 drag = DRAG_NONE;
             } else if (moved > (in.touch ? 10.f : 4.f) * s) {
@@ -521,6 +878,25 @@ void App::canvasInput() {
                     changed();
                 }
                 break;
+            case DRAG_ANNO: {
+                Anno* a = doc.anno(dragAnno);
+                if (!a) break;
+                if (dragAnnoHandle >= 0) {
+                    Vec2 b = snapToGrid ? snapv(w, gridSize(view) / 2) : w;
+                    annoMoveHandle(*a, dragAnnoHandle, b);
+                } else {
+                    Vec2 d = w - pressWorld;
+                    if (snapToGrid) d = snapv(d, gridSize(view) / 2);
+                    for (auto& kv : moveAnnoStart) {
+                        Anno* m = doc.anno(kv.first);
+                        if (!m) continue;
+                        m->a = kv.second.first + d;
+                        m->b = kv.second.second + d;
+                    }
+                }
+                changed();
+                break;
+            }
             default:
                 break;
         }
@@ -582,13 +958,18 @@ std::vector<MenuItem> App::contextMenu(const Hit& h) {
                                    rgba(245, 140, 30), rgba(240, 240, 240), rgba(150, 150, 150), rgba(140, 70, 190)};
             for (int ci = 0; ci < 9; ci++) {
                 uint32_t col = cv[ci];
-                colors.children.push_back(item(tr(names[ci]), [this, col]() {
-                    checkpoint();
-                    for (int id : selWires) if (Wire* w = doc.wire(id)) w->color = col;
-                    changed();
-                }));
+                colors.children.push_back(item(tr(names[ci]), [this, col]() { setWireColor(view, selWires, col); }));
             }
             m.push_back(colors);
+            // Eyedropper: keep this wire's colour for the next wires, without repainting it.
+            if (const Wire* wt = doc.wire(wid)) {
+                uint32_t c = wt->color;
+                m.push_back(item(tr("ctx.wire_color_use"), [this, c]() {
+                    wireColorMem[view] = c;
+                    saveWirePrefs(view);
+                    changed();  // repaint nothing, but the tool button colour may change
+                }));
+            }
         }
         if (view == PCB) {
             m.push_back(item(tr("ctx.move_layer"), [this]() {
@@ -607,6 +988,27 @@ std::vector<MenuItem> App::contextMenu(const Hit& h) {
         m.push_back(item(tr("insp.btn.delete_wire"), [this]() { deleteSelection(); }, "Del"));
     } else if (h.kind == Hit::NOTE) {
         m.push_back(item(tr("insp.btn.delete_note"), [this]() { deleteSelection(); }, "Del"));
+    } else if (h.kind == Hit::ANNO || h.kind == Hit::ANNO_HANDLE) {
+        MenuItem colors;
+        colors.label = tr("anno.stroke_color");
+        const char* names[] = {"anno.color.grey", "anno.color.ink", "anno.color.blue",
+                               "anno.color.red", "anno.color.green", "anno.color.orange"};
+        for (size_t i = 0; i < annoPalette().size(); i++) {
+            uint32_t col = annoPalette()[i];
+            colors.children.push_back(item(tr(names[i]), [this, col]() {
+                checkpoint();
+                for (int id : selAnnos) if (Anno* a = doc.anno(id)) a->stroke = col;
+                changed();
+            }));
+        }
+        m.push_back(colors);
+        m.push_back(item(tr("anno.dashed"), [this]() {
+            checkpoint();
+            for (int id : selAnnos) if (Anno* a = doc.anno(id)) a->dashed = !a->dashed;
+            changed();
+        }));
+        m.push_back(MenuItem::sep());
+        m.push_back(item(tr("insp.btn.delete_anno"), [this]() { deleteSelection(); }, "Del"));
     } else {
         m.push_back(item(tr("menu.edit.paste"), [this]() { paste(); }, "Ctrl+V"));
         m.push_back(item(tr("menu.edit.add_note"), [this]() { addNote(); }));
@@ -822,17 +1224,9 @@ void App::drawCanvas(int v, const Camera& c, Rect vp, bool exporting) {
             g.polyline(pts, std::max(1.f, w.width * z), col);
         }
         if (!exporting && (sel || v != PCB)) {
-            ensureConn();
             for (int e = 0; e < 2; e++) {
                 Vec2 p = e == 0 ? pts.front() : pts.back();
-                bool connected = w.ends[e].attached();
-                if (!connected) {
-                    Vec2 wp = e == 0 ? w.pts.front() : w.pts.back();
-                    for (auto& o : doc.wires) {
-                        if (o.id == w.id || o.view != v) continue;
-                        if (dist(o.pts.front(), wp) < 3 || dist(o.pts.back(), wp) < 3) { connected = true; break; }
-                    }
-                }
+                bool connected = wireEndConnected(w, e);
                 float r = (v == BB ? 13 : 9) * z;
                 if (r < 2.5f * s) r = 2.5f * s;
                 if (v == BB || sel || !connected) g.fillCircle(p, r, connected ? rgba(60, 180, 70) : rgba(225, 50, 50));
@@ -840,6 +1234,27 @@ void App::drawCanvas(int v, const Camera& c, Rect vp, bool exporting) {
             if (sel) for (size_t k = 1; k + 1 < pts.size(); k++) { g.fillCircle(pts[k], 5 * s, rgba(255, 255, 255)); g.strokeCircle(pts[k], 5 * s, 1.5f * s, kSel); }
         }
     };
+
+    // ratsnest: under everything else, so a wire that is still to be routed never
+    // covers a part or the markup drawn around it
+    if (showRatsnest && !exporting && layerShown(v, LY_RATSNEST)) {
+        ensureConn();
+        uint32_t rc = v == BB ? rgba(60, 60, 200, 200) : v == SCH ? rgba(90, 90, 220, 220) : rgba(255, 255, 255, 220);
+        for (auto& r : conn.ratsnest(doc, v)) {
+            bool hov = hover.kind == Hit::RATSNEST && hover.rat.pa == r.pa && hover.rat.pb == r.pb;
+            g.dashedLine(S(r.a), S(r.b), (hov ? 3.f : 1.6f) * s, 6 * s, 4 * s, hov ? kSel : rc);
+        }
+    }
+
+    // Board and backboard bodies are drawn first, then the notes and the markup, and
+    // only then every other part: markup is meant to frame a circuit, so it has to sit
+    // on top of the board it frames, while pins and silkscreen stay above the markup.
+    auto isSubstrate = [](const PartInst& p) { return p.def && (p.def->isBoard || p.def->isBreadboard); };
+    for (auto& p : doc.parts) {
+        if (!p.inView(v) || !isSubstrate(p) || !visible(p.worldBounds(v))) continue;
+        if (!exporting && !partShown(p, v)) continue;
+        drawPrims(p, v, c);
+    }
 
     // notes
     for (auto& n : doc.notes) {
@@ -863,9 +1278,21 @@ void App::drawCanvas(int v, const Camera& c, Rect vp, bool exporting) {
         }
     }
 
+    // annotations (markup): under the parts, so a box drawn around a part never covers
+    // one of its pins, and above the notes and the ratsnest lines
+    for (auto& a : doc.annos) {
+        if (a.view != v) continue;
+        if (!exporting && (a.hidden || !layerShown(v, LY_ANNO))) continue;
+        bool sel = selVisible && selAnnos.count(a.id) > 0;
+        bool hov = selVisible && hover.anno == a.id;
+        drawAnno(g, a, c.pan, z, s, sel, hov);
+    }
+
+    if (!exporting) drawAnnoPreview(c, z, s);
+
     if (v == PCB) {
         auto shownPcb = [&](const PartInst& p, int layer) { return exporting || (!p.hiddenIn(PCB) && layerShown(PCB, layer)); };
-        for (auto& p : doc.parts) if (p.inView(PCB) && p.def->isBoard && shownPcb(p, LY_BOARD)) drawPrims(p, PCB, c);
+        // the board itself went down under the markup, above
         for (auto& w : doc.wires) if (w.view == PCB && w.layer != activeLayer) drawWire(w);
         // pads
         for (auto& p : doc.parts) {
@@ -889,8 +1316,10 @@ void App::drawCanvas(int v, const Camera& c, Rect vp, bool exporting) {
         for (auto& p : doc.parts) {
             if (!p.inView(v) || !visible(p.worldBounds(v))) continue;
             if (!exporting && (p.hiddenIn(v) || !layerShown(v, LY_PARTS))) continue;
-            drawPrims(p, v, c);
-            if (v == SCH && showPartLabels && (exporting || layerShown(SCH, LY_LABELS)) && p.def->netProp.empty()) {
+            if (!isSubstrate(p)) {
+                drawPrims(p, v, c);
+            }
+            if (!isSubstrate(p) && v == SCH && showPartLabels && (exporting || layerShown(SCH, LY_LABELS)) && p.def->netProp.empty()) {
                 Rect b = p.worldBounds(SCH);
                 std::string lbl = p.label;
                 if (!p.def->valueProp.empty() && p.def->valueProp != "pins") lbl += "  " + p.prop(p.def->valueProp);
@@ -958,16 +1387,6 @@ void App::drawCanvas(int v, const Camera& c, Rect vp, bool exporting) {
                     }
                 }
             }
-        }
-    }
-
-    // ratsnest
-    if (showRatsnest && !exporting && layerShown(v, LY_RATSNEST)) {
-        ensureConn();
-        uint32_t rc = v == BB ? rgba(60, 60, 200, 200) : v == SCH ? rgba(90, 90, 220, 220) : rgba(255, 255, 255, 220);
-        for (auto& r : conn.ratsnest(doc, v)) {
-            bool hov = hover.kind == Hit::RATSNEST && hover.rat.pa == r.pa && hover.rat.pb == r.pb;
-            g.dashedLine(S(r.a), S(r.b), (hov ? 3.f : 1.6f) * s, 6 * s, 4 * s, hov ? kSel : rc);
         }
     }
 

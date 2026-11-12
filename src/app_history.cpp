@@ -132,7 +132,7 @@ void App::openVersionCopy(const std::string& text, const std::string& label) {
         savedRevision = -1;
         undoStack.clear();
         redoStack.clear();
-        selParts.clear(); selWires.clear(); selNotes.clear();
+        selParts.clear(); selWires.clear(); selNotes.clear(); selAnnos.clear();
         for (auto& c : cam) c.valid = false;
         ui.closeSheet();
         ui.toast(trf("toast.opened_copy", {label}));

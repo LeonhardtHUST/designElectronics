@@ -189,7 +189,9 @@ void App::drawCodePanel(Rect r) {
     Rect inR(serR.x + 10 * s, serR.b() - 40 * s, serR.w - 90 * s, 30 * s);
     bool send = ui.textField("ser-in", inR, serialSend, tr("code.send_placeholder"), true);
     (void)send;
-    bool enter = in.key(SDLK_RETURN) || in.key(SDLK_KP_ENTER);
+    // Enter sends, but not while a dialog owns the keyboard (it uses Enter for its
+    // own primary button).
+    bool enter = (in.key(SDLK_RETURN) || in.key(SDLK_KP_ENTER)) && !ui.hasDialog();
     if ((ui.button("ser-send", Rect(inR.r() + 6 * s, inR.y, 64 * s, inR.h), tr("code.send"), BTN_NORMAL, false, !serialSend.empty()) || (enter && !serialSend.empty())) && simOn) {
         simulator.serialInput(codePart, serialSend + "\n");
         serialSend.clear();

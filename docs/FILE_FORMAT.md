@@ -1,4 +1,4 @@
-# The `.dez` file format (version 1)
+# The `.dez` file format (version 3)
 
 A designElectronics project is one UTF-8 **JSON** file with the extension
 `.dez`. It is self-contained: besides the design itself it embeds the full
@@ -13,7 +13,7 @@ y axis points down. Breadboard holes are 100 mil apart.
 ```jsonc
 {
   "format": "designElectronics",   // required, identifies the file
-  "version": 1,                    // format version; readers ignore unknown fields
+  "version": 3,                    // format version; readers ignore unknown fields
   "app": "designElectronics 0.1.0",
   "uid": "97b8da3c1e0f4a21",       // optional: stable design id; local version history follows it
   "title": "LED with battery",
@@ -27,9 +27,11 @@ y axis points down. Breadboard holes are 100 mil apart.
   },
   "rules": { "traceWidth": 24, "clearance": 12, "viaPad": 40, "viaDrill": 20 },
   "nextId": 14,
+  "nextGroup": 2,                  // optional: next hierarchy group id (version 3 and newer)
   "parts":   [ ... ],
   "wires":   [ ... ],
   "notes_":  [ ... ],              // sticky notes on the canvas
+  "annos":   [ ... ],              // drawing annotations (version 2 and newer)
   "library": [ ... ]               // embedded part definitions
 }
 ```
@@ -48,6 +50,7 @@ y axis points down. Breadboard holes are 100 mil apart.
     "pcb":        { "at": [500, 400], "flip": true, "hidden": true }
   },
   "locked": true,                  // optional: can't be moved or deleted in the editor
+  "group": 2,                      // optional: hierarchy group (version 3 and newer)
   "code": "void setup() {…}\nvoid loop() {…}"  // optional: the board's program (Arduino sketch)
 }
 ```
@@ -55,6 +58,15 @@ y axis points down. Breadboard holes are 100 mil apart.
 `rot` is clockwise in degrees (0, 90, 180, 270), applied after `flip`, which
 mirrors horizontally. `hidden` hides the part in that view only; it is purely
 visual (the part still connects, simulates and exports).
+
+## Hierarchy
+
+The order of `parts` is the stacking order: earlier entries are further back,
+later ones are further forward. A part with a `group` id shares its level with
+every other part carrying the same id. Group members must be **neighbours** in
+the array; readers pull scattered members together, and a group left with fewer
+than two members is dissolved. Groups never nest: a part has at most one group
+id, so a group cannot contain another group. `nextGroup` is the next free id.
 
 ## Wires and traces
 
@@ -90,6 +102,36 @@ pin, or within 3 mil of another wire end in the same view, connects to it.
 ```jsonc
 { "id": 13, "view": "breadboard", "at": [0, -1100], "size": [2200, 600], "text": "Hello" }
 ```
+
+## Annotations
+
+Markup drawn over the design: rectangles, lines, circles and text. Annotations
+are **never** electrical — they are not connected, simulated, routed, checked by
+DRC or written to a netlist, Gerber or BOM — so a circle drawn around a pin
+creates no net.
+
+```jsonc
+{
+  "id": 21,
+  "view": "schematic",             // breadboard | schematic | pcb
+  "kind": "rect",                  // rect | line | circle | text
+  // rect/line: start and end point. circle: centre and a point on the circle.
+  // text: top-left corner and the box size.
+  "a": [200, 1200],
+  "b": [1600, 2400],
+  "stroke": "#787c82",             // default: neutral grey
+  "fill": "#fff6b0",               // optional: text background only
+  "dashed": true,
+  "widthStep": 0,                  // reserved: 0/1/2
+  "text": "check the polarity",    // kind == "text"
+  "textSize": 108,                 // world units, as for notes
+  "hidden": false                  // hidden by the Layers panel
+}
+```
+
+An unknown `kind` is skipped on load (with a log line) and the rest of the file
+still opens. Version 1 files have no `annos` field at all: they load with an
+empty list.
 
 ## Part definitions (`library`, `.dezpart`)
 

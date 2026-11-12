@@ -126,9 +126,17 @@ bool UI::overBlocking(Vec2 p) const {
 }
 
 bool UI::interactive(Rect r) const {
-    if (blocking()) return false;
+    if (blocking() && !inDialogs_) return false;
     if (clipping_ && !clipStack_.contains(in->mouse)) return false;
     return true;
+}
+
+// A dialog is modal over everything: while one is open, only the dialog itself may be
+// hot. `inDialogs_` is set while drawDialogs() runs, so its own controls still work.
+bool UI::hotRect(Rect r) const {
+    if (!dialogs_.empty() && !inDialogs_) return false;
+    if (!r.contains(in->mouse)) return false;
+    return interactive(r);
 }
 
 void UI::label(Rect r, const std::string& t, uint32_t col, float px, int align, FontFace face) {
@@ -263,7 +271,7 @@ bool UI::textField(const std::string& sid, Rect r, std::string& value, const std
     if (interactive(r)) fieldRects_.push_back({r, inner, false});
     if (focused) {
         focusSeen_ = true;
-        if (in->pressed && !r.contains(in->mouse)) {
+        if (in->pressed && !r.contains(in->mouse) && !hasDialog()) {
             value = editBuf_;
             committed = true;
             clearFocus();
@@ -368,7 +376,7 @@ bool UI::textArea(const std::string& sid, Rect r, std::string& value, const std:
     };
     if (focused) {
         focusSeen_ = true;
-        if (in->pressed && !r.contains(in->mouse)) {
+        if (in->pressed && !r.contains(in->mouse) && !hasDialog()) {
             value = editBuf_;
             clearFocus();
             focused = false;
@@ -483,7 +491,8 @@ bool UI::comboField(const std::string& sid, Rect r, std::string& value, const st
             }
             openMenu(r, items);
         }
-        g->text({r.x + 10 * s, r.center().y}, shownAs(value), 14 * s, th.text, 0);
+        std::string shown = g->ellipsize(shownAs(value), 14 * s, std::max(20 * s, r.w - 34 * s));
+        g->text({r.x + 10 * s, r.center().y}, shown, 14 * s, th.text, 0);
         drawIcon("chevron", Rect(r.r() - 22 * s, r.center().y - 7 * s, 14 * s, 14 * s), th.textDim);
     }
     if (pendingComboId_ == hashId(sid)) {
@@ -630,6 +639,11 @@ void UI::drawMenus() {
 void UI::drawDialogs() {
     if (dialogs_.empty()) return;
     Dialog d = dialogs_.front();
+    // A dialog is modal *over* a sheet (the settings sheet asks for confirmations), so
+    // its buttons have to stay clickable while a sheet sits underneath.
+    std::vector<Sheet> savedSheets = sheets_;
+    sheets_.clear();
+    inDialogs_ = true;  // the latch that keeps everything behind this dialog cold
     int ww = 0, wh = 0;
     SDL_GetWindowSizeInPixels(window, &ww, &wh);
     g->fillRect({0, 0, (float)ww, (float)wh}, rgba(0, 0, 0, 90));
@@ -675,6 +689,8 @@ void UI::drawDialogs() {
     if (esc && d.buttons.size() > 1) {
         for (size_t i = 0; i < d.buttons.size(); i++) if (!d.buttons[i].primary) { clicked = (int)i; break; }
     }
+    sheets_ = savedSheets;
+    inDialogs_ = false;
     if (clicked >= 0) {
         auto action = d.buttons[(size_t)clicked].action;
         dialogs_.erase(dialogs_.begin());
@@ -802,6 +818,12 @@ void UI::drawIcon(const std::string& n, Rect r, uint32_t c) {
     else if (n == "chevron") { PL({{6, 9}, {12, 15}, {18, 9}}); }
     else if (n == "chevright") { PL({{9, 6}, {15, 12}, {9, 18}}); }
     else if (n == "wire") { g->fillCircle(P(5, 19), 2.5f * u, c); g->fillCircle(P(19, 5), 2.5f * u, c); PL({{5, 19}, {5, 12}, {19, 12}, {19, 5}}); }
+    // Drawing tools: an arrow for select, then one glyph per shape.
+    else if (n == "select") { g->fillConvex({P(5, 3), P(5, 19), P(9.5f, 14.5f), P(13, 20.5f), P(16.5f, 18.5f), P(13, 12.5f), P(18.5f, 12)}, c); }
+    else if (n == "rect") { g->strokeRoundRect(Rect(P(3.5f, 5.5f).x, P(3.5f, 5.5f).y, 17 * u, 13 * u), 1.5f * u, w, c); }
+    else if (n == "line") { L(4, 20, 20, 4); g->fillCircle(P(4, 20), 2.2f * u, c); g->fillCircle(P(20, 4), 2.2f * u, c); }
+    else if (n == "circle") { g->strokeCircle(P(12, 12), 8.5f * u, w, c); }
+    else if (n == "text") { L(5, 5, 19, 5); L(12, 5, 12, 19); L(8, 19, 16, 19); }
     else if (n == "copy") { g->strokeRoundRect(Rect(P(8, 8).x, P(8, 8).y, 12 * u, 12 * u), 2 * u, w, c); PL({{16, 4}, {4, 4}, {4, 16}}); }
     else if (n == "help") { g->strokeCircle(P(12, 12), 9 * u, w, c); A(12, 9.5f, 3, 180, 400); L(12, 13, 12, 14.5f); g->fillCircle(P(12, 17.5f), 1.3f * u, c); }
     else if (n == "bolt") { g->fillConvex({P(13, 2), P(5, 14), P(11, 14)}, c); g->fillConvex({P(11, 22), P(19, 10), P(13, 10)}, c); g->fillConvex({P(13, 2), P(11, 14), P(13, 10)}, c); g->fillConvex({P(11, 14), P(13, 10), P(11, 22)}, c); }

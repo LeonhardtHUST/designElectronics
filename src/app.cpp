@@ -13,7 +13,8 @@
 
 static void newProjectContents(Document& d) {
     d.clear();
-    d.addPart("breadboard", {{"size", "half+"}}, {0, 0});
+    // A new project is one HUST EIC lesson breadboard: nothing soldered on it yet.
+    d.addPart("breadboard", {{"size", "HUST EIC Lesson"}}, {0, 0});
     d.addPart("pcb_board", {}, {0, 0});
 }
 
@@ -27,6 +28,9 @@ bool App::init(int argc, char** argv) {
         SDL_Log("SDL_Init failed: %s", SDL_GetError());
         return false;
     }
+    // Preferences first: they hold the interface language, and a damaged or read-only
+    // config.toml has to be reported. Migrating an old settings.json happens here too.
+    settingsInit();
     // Translations before anything draws: the stored choice wins, otherwise the OS
     // locale picks the language. --lang overrides both for screenshots and tests.
     i18n::init(!startupLanguage.empty() ? startupLanguage : settingsGet("language"));
@@ -40,6 +44,8 @@ bool App::init(int argc, char** argv) {
     SDL_SetWindowMinimumSize(win, 360, 480);
 #endif
     loadGitHubSettings();
+    loadWirePrefs();  // colours and widths the user picked for new wires
+    loadBindings();   // keyboard and mouse mapping
     webRegisterApp(this);
     if (SDL_Surface* icon = makeLogoSurface(256)) {
         SDL_SetWindowIcon(win, icon);
@@ -53,6 +59,8 @@ bool App::init(int argc, char** argv) {
     ui.g = &g;
     ui.in = &in;
     ui.window = win;
+    // A settings problem is worth one toast, never a dialog on startup.
+    if (!settingsWarning().empty()) ui.toast(tr(settingsWarning()), 6);
 
     // Installed part models live outside the project, so they are available in
     // every design and to the MCP tools.
@@ -69,24 +77,23 @@ bool App::init(int argc, char** argv) {
     bool loaded = false;
     if (!openPath.empty()) loaded = loadFile(openPath);
     if (!loaded && !readOnly && !scratchSession) {
+        // Nothing is created yet: the first screen asks whether to open or start
+        // a project, and keeps the autosave for an explicit "restore".
         bool ok = false;
-        std::string text = readTextFile(autosavePath(), &ok);
-        if (ok) {
-            Json j = Json::parse(text);
-            std::string err;
-            if (doc.fromJson(j, &err)) {
-                filePath = j["autosaveOf"].str();
-                savedRevision = j["autosaveDirty"].boolean() ? -1 : doc.revision;
-                loaded = true;
-                for (auto& lj : j["library"].items())
-                    if (isCustomType(lj["type"].str())) customEntries.push_back({lj["type"].str(), lj["title"].str(), "Custom", {}});
-            }
+        std::string autosave = readTextFile(autosavePath(), &ok);
+        if (ok && !autosave.empty()) {
+            Json j = Json::parse(autosave);
+            // A clean autosave (already saved) is not worth offering again.
+            autosaveAvailable = j["autosaveDirty"].boolean() || j["autosaveOf"].str().empty();
         }
+        startScreen = true;
+        doc.clear();
     }
-    if (!loaded) {
+    if (!loaded && (readOnly || scratchSession)) {
+        // screenshots and the viewer still start on the default design
         newProjectContents(doc);
-        savedRevision = doc.revision;
     }
+    savedRevision = doc.revision;
     autosaveRevision = doc.revision;
     return true;
 }
@@ -246,6 +253,7 @@ void App::pruneSelection() {
     for (auto it = selParts.begin(); it != selParts.end();) it = doc.part(*it) ? std::next(it) : selParts.erase(it);
     for (auto it = selWires.begin(); it != selWires.end();) it = doc.wire(*it) ? std::next(it) : selWires.erase(it);
     for (auto it = selNotes.begin(); it != selNotes.end();) it = doc.note(*it) ? std::next(it) : selNotes.erase(it);
+    for (auto it = selAnnos.begin(); it != selAnnos.end();) it = doc.anno(*it) ? std::next(it) : selAnnos.erase(it);
 }
 
 // ---------------------------------------------------------------------------
@@ -274,11 +282,86 @@ void App::newDoc() {
         savedRevision = doc.revision;
         undoStack.clear();
         redoStack.clear();
-        selParts.clear(); selWires.clear(); selNotes.clear();
+        selParts.clear(); selWires.clear(); selNotes.clear(); selAnnos.clear();
         for (auto& c : cam) c.valid = false;
         simOn = false;
         drcIssues.clear();
     });
+}
+
+// ---------------------------------------------------------------------------
+// First screen: open an existing project or start a new one
+// ---------------------------------------------------------------------------
+
+bool App::restoreAutosave() {
+    bool ok = false;
+    std::string text = readTextFile(autosavePath(), &ok);
+    if (!ok || text.empty()) return false;
+    Json j = Json::parse(text);
+    std::string err;
+    if (!doc.fromJson(j, &err)) { ui.dialog(tr("dlg.open_failed"), {err}, {}); return false; }
+    filePath = j["autosaveOf"].str();
+    savedRevision = j["autosaveDirty"].boolean() ? -1 : doc.revision;
+    autosaveRevision = doc.revision;
+    customEntries.clear();
+    for (auto& lj : j["library"].items())
+        if (isCustomType(lj["type"].str())) customEntries.push_back({lj["type"].str(), lj["title"].str(), "Custom", {}});
+    undoStack.clear();
+    redoStack.clear();
+    selParts.clear(); selWires.clear(); selNotes.clear(); selAnnos.clear();
+    for (auto& c : cam) c.valid = false;
+    simOn = false;
+    drcIssues.clear();
+    startScreen = false;
+    return true;
+}
+
+void App::startScreenNew() {
+    newProjectContents(doc);
+    filePath.clear();
+    savedRevision = doc.revision;
+    autosaveRevision = doc.revision;
+    undoStack.clear();
+    redoStack.clear();
+    selParts.clear(); selWires.clear(); selNotes.clear(); selAnnos.clear();
+    for (auto& c : cam) c.valid = false;
+    simOn = false;
+    drcIssues.clear();
+    startScreen = false;
+}
+
+void App::drawStartScreen() {
+    float s = ui.s;
+    auto& th = ui.th;
+    Rect full(0, 0, (float)winW, (float)winH);
+    g.fillRect(full, th.bg);
+
+    float cw = std::min(540 * s, full.w - 40 * s);
+    float ch = std::min(322 * s, full.h - 40 * s);
+    Rect card(full.center().x - cw / 2, full.center().y - ch / 2, cw, ch);
+    g.fillRoundRect(Rect(card.x + 2 * s, card.y + 4 * s, card.w, card.h), 18 * s, rgba(0, 0, 0, 26));
+    g.fillRoundRect(card, 18 * s, th.panel);
+    g.strokeRoundRect(card, 18 * s, std::max(1.f, s), th.border);
+
+    float pad = 30 * s;
+    g.text({card.center().x, card.y + 46 * s}, "designElectronics", 30 * s, th.text, 1);
+    g.text({card.center().x, card.y + 76 * s}, tr("view.breadboard") + "  ·  " + tr("view.schematic") + "  ·  " + tr("view.pcb"),
+           11.5f * s, th.textDim, 1);
+    float ty = card.y + 104 * s;
+    ty += ui.wrappedText(Rect(card.x + pad, ty, card.w - 2 * pad, 0), tr("welcome.subtitle"), th.textDim, 13.5f * s) + 18 * s;
+
+    Rect open(card.x + pad, ty, card.w - 2 * pad, 46 * s);
+    if (ui.button("w-open", open, tr("welcome.open"), BTN_PRIMARY)) startScreenOpen();
+    Rect nw(card.x + pad, open.b() + 10 * s, card.w - 2 * pad, 46 * s);
+    if (ui.button("w-new", nw, tr("welcome.new"), BTN_NORMAL)) startScreenNew();
+    if (autosaveAvailable) {
+        Rect rr(card.x + pad, nw.b() + 10 * s, card.w - 2 * pad, 30 * s);
+        if (ui.button("w-restore", rr, tr("welcome.restore"), BTN_FLAT)) {
+            if (!restoreAutosave()) ui.toast(tr("welcome.restore_failed"));
+        }
+    }
+    float hintY = card.b() - 22 * s;
+    if (hintY > nw.b() + 14 * s) g.text({card.center().x, hintY}, tr("welcome.hint"), 11.5f * s, th.textDim, 1);
 }
 
 static bool endsWith(const std::string& s, const std::string& suf) {
@@ -328,9 +411,10 @@ bool App::loadFile(const std::string& path) {
         if (isCustomType(lj["type"].str())) customEntries.push_back({lj["type"].str(), lj["title"].str(), "Custom", {}});
     filePath = path;
     savedRevision = doc.revision;
+    startScreen = false;  // an opened project replaces the first screen
     undoStack.clear();
     redoStack.clear();
-    selParts.clear(); selWires.clear(); selNotes.clear();
+    selParts.clear(); selWires.clear(); selNotes.clear(); selAnnos.clear();
     for (auto& c : cam) c.valid = false;
     drcIssues.clear();
     simOn = false;
@@ -398,6 +482,17 @@ static void SDLCALL dialogCallback(void* userdata, const char* const* filelist, 
         app->runOnMain([f, path]() { f(path); });
     }
     delete ctx;
+}
+
+// The welcome screen's "Open project": no discard prompt, nothing to lose yet.
+void App::startScreenOpen() {
+#ifdef __EMSCRIPTEN__
+    webPickFile(".dez,.dezpart,.json");
+    return;
+#endif
+    const SDL_DialogFileFilter f[] = {{tr("filter.project").c_str(), "dez"}};
+    auto* ctx = new DialogCtx{this, [this](const std::string& p) { loadFile(p); }, nullptr};
+    SDL_ShowOpenFileDialog(dialogCallback, ctx, win, f, 1, documentsDir().c_str(), false);
 }
 
 static void showSave(App* app, const std::string& defName, const SDL_DialogFileFilter* filters, int n,
@@ -600,7 +695,7 @@ void App::loadExample(size_t i) {
         savedRevision = doc.revision;
         undoStack.clear();
         redoStack.clear();
-        selParts.clear(); selWires.clear(); selNotes.clear();
+        selParts.clear(); selWires.clear(); selNotes.clear(); selAnnos.clear();
         for (auto& c : cam) c.valid = false;
         drcIssues.clear();
         simOn = false;
@@ -618,13 +713,97 @@ void App::showAbout() {
     ui.dialog("designElectronics " + std::string(kAppVersion), lines, {});
 }
 
-void App::showShortcuts() {
-    const char* keys[] = {"shortcut.1", "shortcut.2", "shortcut.3", "shortcut.4", "shortcut.5", "shortcut.6",
-                          "shortcut.7", "shortcut.8", "shortcut.9", "", "shortcut.10", "shortcut.11", "shortcut.12", "shortcut.13"};
+// The dialog is generated from the binding table, so it always shows what the keys
+// really do — including whatever the user rebound in Settings.
+std::vector<std::string> App::shortcutLines() const {
     std::vector<std::string> lines;
-    lines.reserve(sizeof keys / sizeof keys[0]);
-    for (const char* k : keys) lines.push_back(*k ? tr(k) : std::string());
-    ui.dialog(tr("dlg.shortcuts.title"), lines, {});
+    lines.reserve(kActionCount + 7);
+    for (int i = 0; i < kActionCount; i++) {
+        Action a = (Action)i;
+        lines.push_back(trf("shortcut.entry", {actionLabel(a), chordToText(binds.chord[i])}));
+    }
+    lines.push_back(std::string());
+    lines.push_back(tr("shortcut.10"));
+    lines.push_back(tr("shortcut.11"));
+    lines.push_back(tr("shortcut.14"));  // add / remove a bend point, on the canvas
+    lines.push_back(tr("shortcut.12"));
+    lines.push_back(tr("shortcut.13"));
+    lines.push_back(tr("shortcut.15"));  // where all of this can be changed
+    return lines;
+}
+
+void App::showShortcuts() { ui.dialog(tr("dlg.shortcuts.title"), shortcutLines(), {}); }
+
+// ---------------------------------------------------------------------------
+// Keyboard & mouse mapping (the table lives in keys.cpp)
+// ---------------------------------------------------------------------------
+
+void App::loadBindings() {
+    binds = defaultBindings();
+    for (int i = 0; i < kActionCount; i++) {
+        std::string key = std::string("shortcut.") + actionId((Action)i);
+        std::string stored = settingsGet(key.c_str(), "\x01");
+        if (stored == "\x01") continue;  // never saved: keep the default
+        KeyChord c;
+        if (!chordFromText(stored, &c)) {
+            SDL_Log("settings: %s = '%s' is not a key combination, using the default", key.c_str(), stored.c_str());
+            continue;
+        }
+        binds.chord[i] = c;
+    }
+    static const char* slots[kMouseSlots] = {"mouse.middle", "mouse.right", "mouse.space_left"};
+    for (int i = 0; i < kMouseSlots; i++) {
+        MouseRole r;
+        if (mouseRoleFromId(settingsGet(slots[i], ""), &r)) binds.mouse[i] = r;
+    }
+}
+
+void App::saveBindings() {
+    for (int i = 0; i < kActionCount; i++) {
+        std::string key = std::string("shortcut.") + actionId((Action)i);
+        settingsSet(key.c_str(), chordToToken(binds.chord[i]));
+    }
+    static const char* slots[kMouseSlots] = {"mouse.middle", "mouse.right", "mouse.space_left"};
+    for (int i = 0; i < kMouseSlots; i++) settingsSet(slots[i], mouseRoleId(binds.mouse[i]));
+}
+
+void App::applyBinding(Action a, const KeyChord& c, int conflictAction) {
+    if (conflictAction >= 0 && conflictAction < kActionCount && conflictAction != (int)a) binds.chord[conflictAction] = KeyChord();
+    binds.chord[(int)a] = c;
+    saveBindings();
+}
+
+// Runs one table action. An action that does not apply is a no-op.
+void App::runAction(Action a) {
+    switch (a) {
+        case Action::Undo: undo(); break;
+        case Action::Redo: redo(); break;
+        case Action::Delete: deleteSelection(); break;
+        case Action::Copy: copySelection(false); break;
+        case Action::Paste: paste(); break;
+        case Action::Rotate: rotateSelection(in.shift() ? -1 : 1); break;
+        case Action::Flip: flipSelection(); break;
+        case Action::AddBend: addBendAtPointer(); break;
+        case Action::ViewBB: setView(BB); break;
+        case Action::ViewSCH: setView(SCH); break;
+        case Action::ViewPCB: setView(PCB); break;
+        case Action::ToolSelect:
+            if (tool != TOOL_SELECT) cancelAnnoTool();
+            else { selParts.clear(); selWires.clear(); selNotes.clear(); selAnnos.clear(); }
+            break;
+        case Action::ToolWire: setTool(TOOL_WIRE); break;
+        case Action::ToolShape: cycleShapeTool(); break;
+        case Action::ToolText: setTool(TOOL_TEXT); break;
+        case Action::Save: in.shift() ? saveAs() : save(); break;
+        case Action::kCount: break;
+    }
+}
+
+// Adds a bend point where the pointer is, on the wire segment under it.
+void App::addBendAtPointer() {
+    if (readOnly || !rCanvas.contains(in.mouse)) return;
+    Hit h = hitTest(in.mouse);
+    if (h.kind == Hit::WIRE_SEG) insertBendAt(h, toWorld(in.mouse));
 }
 
 // ---------------------------------------------------------------------------
@@ -632,16 +811,17 @@ void App::showShortcuts() {
 // ---------------------------------------------------------------------------
 
 void App::deleteSelection() {
-    if (selParts.empty() && selWires.empty() && selNotes.empty()) return;
+    if (selParts.empty() && selWires.empty() && selNotes.empty() && selAnnos.empty()) return;
     std::set<int> keep;
     for (int id : selParts) if (auto* p = doc.part(id)) if (p->locked) keep.insert(id);
     if (!keep.empty()) ui.toast(trn("toast.locked_kept", (long long)keep.size()));
-    if (keep.size() == selParts.size() && selWires.empty() && selNotes.empty()) return;
+    if (keep.size() == selParts.size() && selWires.empty() && selNotes.empty() && selAnnos.empty()) return;
     checkpoint();
     for (int id : selWires) doc.removeWire(id);
     for (int id : selNotes) doc.removeNote(id);
+    for (int id : selAnnos) doc.removeAnno(id);
     for (int id : selParts) if (!keep.count(id)) doc.removePart(id);
-    selParts = keep; selWires.clear(); selNotes.clear();
+    selParts = keep; selWires.clear(); selNotes.clear(); selAnnos.clear();
     changed();
 }
 
@@ -684,7 +864,7 @@ void App::flipSelection() {
 }
 
 void App::copySelection(bool cut) {
-    if (selParts.empty() && selWires.empty() && selNotes.empty()) return;
+    if (selParts.empty() && selWires.empty() && selNotes.empty() && selAnnos.empty()) return;
     Document clip;
     clip.title = "clipboard";
     for (auto& p : doc.parts) if (selParts.count(p.id)) clip.parts.push_back(p);
@@ -697,10 +877,11 @@ void App::copySelection(bool cut) {
         }
     }
     for (auto& n : doc.notes) if (selNotes.count(n.id)) clip.notes.push_back(n);
+    for (auto& a : doc.annos) if (selAnnos.count(a.id)) clip.annos.push_back(a);
     clip.nextId = doc.nextId;
     SDL_SetClipboardText(clip.serialize(false).c_str());
     if (cut) deleteSelection();
-    else ui.toast(trn("toast.copied", (long long)(clip.parts.size() + clip.wires.size() + clip.notes.size())));
+    else ui.toast(trn("toast.copied", (long long)(clip.parts.size() + clip.wires.size() + clip.notes.size() + clip.annos.size())));
 }
 
 void App::paste() {
@@ -712,11 +893,12 @@ void App::paste() {
     if (text.empty() || !clip.deserialize(text, &err)) { ui.toast(tr("toast.nothing_to_paste")); return; }
     checkpoint();
     std::map<int, int> idMap;
-    selParts.clear(); selWires.clear(); selNotes.clear();
+    selParts.clear(); selWires.clear(); selNotes.clear(); selAnnos.clear();
     Vec2 off(200, 200);
     for (auto& p : clip.parts) {
         PartInst n = p;
         n.id = doc.newId();
+        n.group = 0;  // a pasted copy starts on its own level
         idMap[p.id] = n.id;
         for (auto& pl : n.place) pl.pos += off;
         // keep labels unique
@@ -746,6 +928,14 @@ void App::paste() {
         doc.notes.push_back(n);
         selNotes.insert(n.id);
     }
+    for (auto& at : clip.annos) {
+        Anno a = at;
+        a.id = doc.newId();
+        a.a += off;
+        a.b += off;
+        doc.annos.push_back(a);
+        if (a.view == view) selAnnos.insert(a.id);
+    }
     doc.syncWireEnds();
     changed();
 }
@@ -760,10 +950,11 @@ void App::duplicate() {
 }
 
 void App::selectAll() {
-    selParts.clear(); selWires.clear(); selNotes.clear();
+    selParts.clear(); selWires.clear(); selNotes.clear(); selAnnos.clear();
     for (auto& p : doc.parts) if (p.inView(view)) selParts.insert(p.id);
     for (auto& w : doc.wires) if (w.view == view) selWires.insert(w.id);
     for (auto& n : doc.notes) if (n.view == view) selNotes.insert(n.id);
+    for (auto& a : doc.annos) if (a.view == view && !a.hidden) selAnnos.insert(a.id);
 }
 
 void App::addPart(const LibEntry& e, Vec2 world) {
@@ -792,7 +983,7 @@ void App::addPart(const LibEntry& e, Vec2 world) {
         snapPart(p, v, gridSize(v));
     }
     selParts = {p.id};
-    selWires.clear(); selNotes.clear();
+    selWires.clear(); selNotes.clear(); selAnnos.clear();
     changed();
 }
 
@@ -807,6 +998,40 @@ void App::addNote() {
     doc.notes.push_back(n);
     selParts.clear(); selWires.clear();
     selNotes = {n.id};
+    changed();
+    if (compact) drawerInspector = true;
+}
+
+// A new annotation in the middle of the canvas, ready to be moved or resized.
+void App::addAnno(AnnoKind kind) {
+    checkpoint();
+    Anno a;
+    a.id = doc.newId();
+    a.view = view;
+    a.kind = kind;
+    Vec2 ctr = toWorld(rCanvas.center());
+    switch (kind) {
+        case AnnoKind::Rect:
+            a.a = ctr - Vec2(900, 600);
+            a.b = ctr + Vec2(900, 600);
+            break;
+        case AnnoKind::Line:
+            a.a = ctr - Vec2(1200, 0);
+            a.b = ctr + Vec2(1200, 0);
+            break;
+        case AnnoKind::Circle:
+            a.a = ctr;
+            a.b = ctr + Vec2(800, 0);
+            break;
+        case AnnoKind::Text:
+            a.a = ctr - Vec2(900, 300);
+            a.b = Vec2(1800, 0);
+            annoSetText(a, tr("anno.placeholder"));
+            break;
+    }
+    doc.annos.push_back(a);
+    selParts.clear(); selWires.clear(); selNotes.clear();
+    selAnnos = {a.id};
     changed();
     if (compact) drawerInspector = true;
 }
@@ -906,26 +1131,26 @@ void App::setView(int v) {
 }
 
 void App::handleShortcuts() {
+    // The rebindable table comes first, and an action it handles ends the frame's
+    // keyboard work. Unbinding an action therefore really disables it: the keys that
+    // belong to the table are gone from the fallback switch below.
+    int act = actionFor(binds, in);
+    if (act >= 0) {
+        runAction((Action)act);
+        return;
+    }
     bool c = in.cmd(), sh = in.shift();
     for (auto k : in.keys) {
         if (c) {
             switch (k) {
-                case SDLK_Z: sh ? redo() : undo(); break;
-                case SDLK_Y: redo(); break;
-                case SDLK_S: sh ? saveAs() : save(); break;
+                case SDLK_Y: redo(); break;  // Ctrl+Y is a second redo, as in most editors
                 case SDLK_O: openDialog(); break;
                 case SDLK_N: newDoc(); break;
                 case SDLK_H: if (sh) openHistory(); break;
                 case SDLK_K: if (sh) openCommitSheet(); break;
-                case SDLK_C: copySelection(false); break;
                 case SDLK_X: copySelection(true); break;
-                case SDLK_V: paste(); break;
                 case SDLK_D: duplicate(); break;
                 case SDLK_A: selectAll(); break;
-                case SDLK_R: rotateSelection(sh ? -1 : 1); break;
-                case SDLK_1: setView(BB); break;
-                case SDLK_2: setView(SCH); break;
-                case SDLK_3: setView(PCB); break;
                 case SDLK_0: fitView(view, rCanvas); break;
                 case SDLK_EQUALS: case SDLK_PLUS: zoomAt(1.25f, rCanvas.center()); break;
                 case SDLK_MINUS: zoomAt(0.8f, rCanvas.center()); break;
@@ -934,18 +1159,12 @@ void App::handleShortcuts() {
             continue;
         }
         switch (k) {
-            case SDLK_DELETE: case SDLK_BACKSPACE: deleteSelection(); break;
-            case SDLK_R: rotateSelection(sh ? -1 : 1); break;
-            case SDLK_F: flipSelection(); break;
             case SDLK_T: tidyCommand(); break;
             case SDLK_EQUALS: case SDLK_PLUS: case SDLK_KP_PLUS: zoomAt(1.25f, rCanvas.center()); break;
             case SDLK_MINUS: case SDLK_KP_MINUS: zoomAt(0.8f, rCanvas.center()); break;
             case SDLK_0: fitView(view, rCanvas); break;
-            case SDLK_ESCAPE:
-                if (drag == DRAG_NONE) { selParts.clear(); selWires.clear(); selNotes.clear(); }
-                break;
             case SDLK_LEFT: case SDLK_RIGHT: case SDLK_UP: case SDLK_DOWN: {
-                if (selParts.empty() && selWires.empty() && selNotes.empty()) break;
+                if (selParts.empty() && selWires.empty() && selNotes.empty() && selAnnos.empty()) break;
                 float step = gridSize(view) * (sh ? 10 : 1);
                 Vec2 d = k == SDLK_LEFT ? Vec2(-step, 0) : k == SDLK_RIGHT ? Vec2(step, 0) : k == SDLK_UP ? Vec2(0, -step) : Vec2(0, step);
                 checkpoint();
@@ -955,6 +1174,7 @@ void App::handleShortcuts() {
                     if (!endAttached) w->pts[i] += d;
                 }
                 for (int id : selNotes) if (auto* n = doc.note(id)) n->pos += d;
+                for (int id : selAnnos) if (auto* an = doc.anno(id)) { an->a += d; an->b += d; }
                 doc.syncWireEnds();
                 changed();
                 break;
@@ -1008,6 +1228,7 @@ SDL_AppResult App::event(const SDL_Event& e) {
                 in.pressPos = in.mouse;
             } else if (e.button.button == SDL_BUTTON_MIDDLE) {
                 in.middleDown = true;
+                in.middlePressed = true;
                 in.pressPos = in.mouse;
             }
             break;
@@ -1114,6 +1335,22 @@ SDL_AppResult App::iterate() {
     for (int v = 0; v < NUM_VIEWS; v++) if (!cam[v].valid) fitView(v, rCanvas);
 
     ui.begin();
+    if (startScreen && !embedMode) {
+        // Nothing else is drawn and no shortcut is handled: the first screen owns
+        // the frame until the user opens a project or starts a new one.
+        drawStartScreen();
+        ui.end();
+        g.flush();
+        if (!capturePath.empty()) {
+            SDL_Surface* shot = SDL_RenderReadPixels(ren, nullptr);
+            captureOk = shot && SDL_SavePNG(shot, capturePath.c_str());
+            if (shot) SDL_DestroySurface(shot);
+            capturePath.clear();
+        }
+        SDL_RenderPresent(ren);
+        in.endFrame();
+        return SDL_APP_CONTINUE;
+    }
     if (!ui.editingText() && !ui.blocking()) { if (readOnly) handleViewerKeys(); else handleShortcuts(); }
     canvasInput();
 

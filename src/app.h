@@ -13,11 +13,13 @@
 #include "doc.h"
 #include "gfx.h"
 #include "history.h"
+#include "keys.h"
 #include "tools.h"
 #include "ui.h"
+#include "wiregrid.h"
 
 // Per-view drawing layers (toggled in the Layers panel; visual only, not saved).
-enum CanvasLayer { LY_PARTS, LY_WIRES, LY_LABELS, LY_NOTES, LY_RATSNEST, LY_BOARD, LY_COPPER_BOTTOM, LY_COPPER_TOP, LY_PADS, LY_SILK, LY_COUNT };
+enum CanvasLayer { LY_PARTS, LY_WIRES, LY_LABELS, LY_NOTES, LY_ANNO, LY_RATSNEST, LY_BOARD, LY_COPPER_BOTTOM, LY_COPPER_TOP, LY_PADS, LY_SILK, LY_COUNT };
 
 class App;
 // web.cpp — browser glue (no-ops on native builds)
@@ -41,14 +43,27 @@ enum DragMode {
     DRAG_WIRE_BEND,
     DRAG_RUBBER,
     DRAG_NOTE_RESIZE,
+    DRAG_ANNO,         // moving or resizing an annotation (dragAnnoHandle picks which)
     DRAG_BIN,
 };
 
+// Active canvas tool. Everything except TOOL_SELECT changes what a drag on the
+// canvas means: the shape tools draw markup instead of moving things around.
+enum CanvasTool { TOOL_SELECT, TOOL_WIRE, TOOL_RECT, TOOL_LINE, TOOL_CIRCLE, TOOL_TEXT };
+
 // What is under the pointer in the canvas.
 struct Hit {
-    enum Kind { NONE, PIN, PART, WIRE_END, WIRE_BEND, WIRE_SEG, NOTE, NOTE_CORNER, RATSNEST } kind = NONE;
-    int part = -1, pin = -1, wire = -1, index = -1, note = -1;
+    enum Kind { NONE, PIN, PART, WIRE_END, WIRE_BEND, WIRE_SEG, NOTE, NOTE_CORNER, RATSNEST, ANNO, ANNO_HANDLE } kind = NONE;
+    int part = -1, pin = -1, wire = -1, index = -1, note = -1, anno = -1;
     RatLine rat;
+};
+
+// One candidate returned by App::collectHits, ranked by priority (small wins) and
+// then by how close it is to the pointer on screen.
+struct HitCand {
+    Hit h;
+    int prio = 99;
+    float d = 1e30f;  // distance in pixels
 };
 
 class App {
@@ -70,7 +85,15 @@ public:
 
     int view = BB;
     Camera cam[NUM_VIEWS];
-    std::set<int> selParts, selWires, selNotes;
+    std::set<int> selParts, selWires, selNotes, selAnnos;
+    CanvasTool tool = TOOL_SELECT;
+    // Shape being dragged out by a tool: press point, current point, and whether a
+    // drag is in progress (a click without a drag still makes a usable shape).
+    bool annoDrawing = false;
+    Vec2 annoStart, annoNow;
+    // Colour and trace width remembered per view for new wires (persisted in config.toml).
+    uint32_t wireColorMem[NUM_VIEWS] = {rgba(65, 140, 225), rgba(65, 140, 225), rgba(65, 140, 225)};
+    float traceWidthMem[NUM_VIEWS] = {0, 0, 0};
 
     // interaction
     DragMode drag = DRAG_NONE;
@@ -80,6 +103,9 @@ public:
     std::map<int, Vec2> moveStart;                 // part id -> start pos
     std::map<int, std::vector<Vec2>> moveWireStart;  // wire id -> start points
     std::map<int, Vec2> moveNoteStart;
+    std::map<int, std::pair<Vec2, Vec2>> moveAnnoStart;  // anno id -> (a, b) at drag start
+    int dragAnno = -1;                             // annotation being moved or resized
+    int dragAnnoHandle = -1;                       // handle index being dragged, -1 = whole shape
     int anchorPart = -1;
     int dragWire = -1, dragWireEnd = -1, dragBend = -1;
     Vec2 rubberA, rubberB;
@@ -89,8 +115,29 @@ public:
     std::map<SDL_FingerID, Vec2> fingers;
     bool spaceDown = false;
     Vec2 lastMouse;
-    bool prevMiddle = false;
+    bool middleDrag = false;   // the drag in progress was started with the middle button
     int wireTargetPart = -1, wireTargetPin = -1;
+
+    // Cache behind wireEndConnected(): mutable because drawing is const.
+    mutable WireGrid wireGridCache;
+    mutable int wireGridRev = -1, wireGridView = -1, wireGridDrag = -1;
+    mutable int wireGridDragWire = -2, wireGridDragEnd = -2, wireGridTarget = -2;
+
+    // keyboard + mouse mapping (keys.cpp, config.toml under shortcut.* / mouse.*)
+    Bindings binds;
+    int captureChord = -1;   // action waiting for the next key press in the settings sheet
+    void loadBindings();
+    void saveBindings();
+    // Installs a chord. `conflictAction` (from findChord) is cleared first: that is what
+    // the settings sheet does once the user confirms the replacement.
+    void applyBinding(Action a, const KeyChord& c, int conflictAction = -1);
+    void runAction(Action a);
+    void addBendAtPointer();   // the AddBend action, at the pointer
+    void cycleShapeTool();     // rectangle -> line -> circle -> rectangle
+    // Auto resolves to the built-in behaviour of that button; a bound AddBend turns
+    // the middle button back into a plain pan, so the two never fight.
+    MouseRole mouseRoleFor(int slot) const;
+    void openSettingsSheet();  // panels_settings.cpp
 
     // undo
     std::vector<std::string> undoStack, redoStack;
@@ -156,6 +203,8 @@ public:
     bool quitNow = false;
     std::function<void(SDL_Surface*)> frameTap;
     bool scratchSession = false;
+    bool startScreen = false;        // first launch: pick Open or New before anything else
+    bool autosaveAvailable = false;  // an unsaved session can be restored from the welcome screen
     std::function<void(double t)> videoAnimate;
     // --record --zoom-to: world rect to move in on, and how far (0 = whole design, 1 = that rect) at time t
     std::function<float(double t, Rect& focus)> videoZoom;  // --record --animate: change part properties over the clip  // screenshots/recordings: never restore or overwrite the user's autosave  // --record-ui: sees every rendered frame
@@ -176,6 +225,10 @@ public:
     void pruneSelection();
 
     void newDoc();
+    void drawStartScreen();
+    void startScreenNew();
+    void startScreenOpen();
+    bool restoreAutosave();
     void confirmDiscard(std::function<void()> then);
     bool loadFile(const std::string& path);
     bool saveFile(const std::string& path, const std::string& versionMessage = "");
@@ -192,6 +245,8 @@ public:
     std::string autosavePath() const;
     void showAbout();
     void showShortcuts();
+    // The lines of that dialog, generated from the binding table.
+    std::vector<std::string> shortcutLines() const;
 
     void deleteSelection();
     void rotateSelection(int dir);
@@ -202,6 +257,7 @@ public:
     void selectAll();
     void addPart(const LibEntry& e, Vec2 world);
     void addNote();
+    void addAnno(AnnoKind kind);  // a new annotation in the middle of the canvas
     void setPartProp(int partId, const std::string& key, const std::string& value);
     void bringToFront(bool front);
     void runAutoroute();
@@ -309,19 +365,56 @@ public:
     void openCommitSheet();
     void openGitHubAccount();
 
+    // ---- canvas_anno.cpp: markup tools and the remembered wire colour ----
+    void setTool(CanvasTool t);
+    void cancelAnnoTool();                       // back to selection, dropping an unfinished shape
+    bool annoToolInput();                        // true when the tool consumed the pointer
+    bool annoToolActive() const { return tool != TOOL_SELECT; }
+    void drawAnnoPreview(const Camera& c, float zoom, float uiScale);
+    void drawToolHint();                         // one-line reminder of what to do next
+    void createAnnoFromDrag(CanvasTool t, Vec2 a, Vec2 b);
+    void loadWirePrefs();
+    void saveWirePrefs(int v);
+    // The only way a wire colour may change: it also becomes the colour of new wires.
+    void setWireColor(int v, int wireId, uint32_t c);
+    void setWireColor(int v, const std::set<int>& wireIds, uint32_t c);
+    // Remember the width of a hand-picked trace (PCB).
+    void rememberTraceWidth(int v, float w);
+
     // ---- canvas.cpp ----
     Vec2 toWorld(Vec2 s) const { return (s - cam[view].pan) / cam[view].zoom; }
     Vec2 toScreen(Vec2 w) const { return cam[view].pan + w * cam[view].zoom; }
     float gridSize(int v) const { return v == PCB ? 50.f : 100.f; }
     void fitView(int v, Rect viewport);
     void zoomAt(float factor, Vec2 screen);
+    // Every candidate under the pointer, ranked by layer priority and screen distance.
+    void collectHits(Vec2 screen, std::vector<HitCand>& out);
+    // The winner of collectHits(); the public shape of "what did I click".
     Hit hitTest(Vec2 screen);
+    // Screen-space minimum (6 px, 14 on touch) folded into world units, never
+    // thinner than the shape itself.
+    float hitRadius(int v, float visualHalfWorld) const;
     bool pinAt(Vec2 screen, int& part, int& pin, int excludePart, int excludePin);
     void startDrag();
+    // Middle button on the canvas: add a bend point on a wire segment, remove one on a
+    // bend point, otherwise pan. Returns true when the canvas should start panning.
+    bool middleButtonPress(Vec2 screen);
+    // Inserts a bend point on the segment named by `h`, at `world`, and selects that
+    // wire. Returns false when the point would land on an existing end or bend.
+    bool insertBendAt(const Hit& h, Vec2 world);
     void finishPointer();
     void drawPrims(const PartInst& p, int v, const Camera& c, bool forIcon = false);
     void canvasInput();
     void drawCanvas(int v, const Camera& c, Rect viewport, bool exporting);
+    // Is wire end `end` really connected? Structure plus geometry: a snap target only
+    // becomes an attachment when the drag ends, so the red "unconnected" dot must
+    // follow the geometry, not only ends[].
+    bool wireEndConnected(const Wire& w, int end) const;
+    // World tolerance for "these two wire points are the same node", per view.
+    float wireJoinTol(int v) const;
+    // The one view's wires as a grid, rebuilt only when the drawing has changed, so
+    // drawing a wire is not a scan over every other wire.
+    const WireGrid& wireProximity(int v, float tol) const;
     void drawOledFrame(const ard::OledFrame& f, const Prim& screen, const Xform& xf, const Camera& c);
     void drawPartIcon(const PartDefPtr& def, Rect r);
     std::vector<MenuItem> contextMenu(const Hit& h);

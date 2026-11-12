@@ -5,14 +5,15 @@
 #include <unordered_map>
 #include <vector>
 
+#include "anno.h"
 #include "geom.h"
 #include "json.h"
 #include "partlib.h"
 
 constexpr const char* kFileFormat = "designElectronics";
-constexpr int kFileVersion = 1;
+constexpr int kFileVersion = 3;  // 2 adds "annos"; 3 adds part "group" (hierarchy levels)
 constexpr const char* kFileExt = ".dez";
-constexpr const char* kAppVersion = "0.5.2";
+constexpr const char* kAppVersion = "0.6.0";
 
 struct PartInst {
     int id = 0;
@@ -24,6 +25,7 @@ struct PartInst {
     std::string code;     // program running on a microcontroller board (Arduino sketch)
     unsigned hidden = 0;  // bit per view: hidden there (visual only — still connected, simulated, exported)
     bool locked = false;  // can't be moved, rotated or deleted
+    int group = 0;        // hierarchy group (0 = none); a group's parts share one level
     bool hiddenIn(int v) const { return (hidden >> v) & 1u; }
 
     void refresh() { def = getPartDef(type, props); }
@@ -58,7 +60,7 @@ struct Wire {
 };
 
 // Default note text size in world units (the note is drawn at textSize * zoom).
-constexpr float kNoteTextSize = 108;
+// kNoteTextSize itself lives in anno.h, which notes and annotations share.
 
 struct Note {
     int id = 0;
@@ -93,22 +95,40 @@ public:
     std::vector<PartInst> parts;
     std::vector<Wire> wires;
     std::vector<Note> notes;
+    std::vector<Anno> annos;   // markup drawn over the design (never connected)
     DesignRules rules;
     int revision = 0;        // bumped on every change, used for caches
+    int nextGroup = 1;       // hierarchy group ids (0 = not grouped)
 
     void clear();
     int newId() { return nextId++; }
+    int newGroupId() { return nextGroup++; }
 
     PartInst* part(int id);
     const PartInst* part(int id) const;
     Wire* wire(int id);
     Note* note(int id);
+    Anno* anno(int id);
+    const Anno* anno(int id) const;
     int partIndex(int id) const;
+
+    // ---- hierarchy --------------------------------------------------------
+    // The z-order is the order of `parts` (back to front). A group is a run of
+    // neighbouring parts that move as one level; groups never nest, so a part
+    // carries at most one group id.
+    int levelKey(int partId) const;                 // group id, or -part id when ungrouped
+    std::vector<int> groupMembers(int gid) const;
+    bool groupParts(const std::vector<int>& ids);   // false: <2 parts or one is already grouped
+    void ungroup(int gid);
+    bool moveLevel(int partId, int dir);            // dir +1 = towards the front
+    bool canMoveLevel(int partId, int dir) const;
+    void normalizeGroups();                         // dissolve groups left with <2 members
 
     PartInst& addPart(const std::string& type, const Props& props, Vec2 posAllViews);
     void removePart(int id);
     void removeWire(int id);
     void removeNote(int id);
+    void removeAnno(int id);
     std::string nextLabel(const std::string& prefix) const;
 
     // Moves attached wire ends to follow their pins.

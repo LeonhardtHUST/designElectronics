@@ -79,7 +79,9 @@ autorouting, DRC and every exporter.
 4. **Share** — **Save / Share** writes a `.dez` file. Anyone with
    designElectronics can open it on any platform.
 
-Keyboard shortcuts are listed under **Help ▸ Keyboard & Touch Shortcuts**.
+Keyboard shortcuts are listed under **Help ▸ Keyboard & Touch Shortcuts**. Every one of them,
+and what each mouse button does, can be changed in **View ▸ Settings** — the choice is stored in
+`config.toml` in the preferences folder, so it survives a restart.
 
 ## All features
 
@@ -105,7 +107,7 @@ Built in C++17 with **SDL3** and SDL3_ttf. No other dependencies.
 | **Export** | Gerber RS-274X + Excellon drill (zipped, ready to upload to a fab), SVG and PNG of any view, Bill of Materials (CSV), XML netlist, SPICE netlist. |
 | **Editing** | Undo/redo, copy/cut/paste (clipboard is JSON, so you can paste between windows or apps), duplicate, rotate, flip, z-order, rubber-band selection, notes, snap-to-grid, keyboard nudging. |
 | **Mobile-friendly** | Adaptive layout: on narrow screens the parts bin and inspector become slide-over drawers and the toolbar grows larger. One finger pans, two fingers pinch-zoom, long-press opens context menus. Respects safe areas. Autosaves continuously, so nothing is lost if the OS kills the app. |
-| **Layers** | A Photoshop-style Layers panel (tab next to Parts; a drawer on phones): toggle each view's layers (PCB: board, top/bottom copper, pads, silkscreen, labels…), see every part with parts plugged into a breadboard grouped under it, click to select, double-click to zoom, hide parts per view, lock them so they can't be moved. Badges flag unrouted connections, parts without a simulation model, damaged parts and live LED brightness. |
+| **Stack** | A Photoshop-style stack of components (tab next to Parts; a drawer on phones): move a component up or down, group selected parts so they share one level, ungroup them again, click to select, double-click to zoom, hide parts per view, lock them. Groups never nest. Badges flag unrouted connections, parts without a simulation model, damaged parts and live LED brightness. |
 | **Version history** | Every save keeps a version on your device, with a summary of what changed ("R1 resistance 220Ω → 330Ω · Added LED2"). **File ▸ Version History** lets you restore any version or open it as a copy — offline, on every platform. |
 | **GitHub sync (optional)** | Connect GitHub and **File ▸ Commit to GitHub** commits the design to a private repository you own (each design in its own folder, or its own repo), optionally on every save. Older commits show up in Version History and can be restored from any device. Desktop builds; uses the system's libcurl. |
 | **Program boards** | Each microcontroller board can hold an **Arduino sketch** that runs in the simulator (built-in interpreter: pins, `analogRead`, `delay`/`millis`, `Serial`, `shiftOut`, ESP32 `ledc`…) with the executing line highlighted and a Serial Monitor, and uploads to the real board via arduino-cli / Arduino IDE 2. |

@@ -24,7 +24,7 @@ PACK_DIR = os.path.join(ROOT, "i18n")
 SRC_DIR = os.path.join(ROOT, "src")
 
 # Built from data at runtime: part.<type>.title, cat.<slug>, propval.<value>, …
-DYNAMIC_PREFIXES = ("part.", "cat.", "prop.", "propval.", "entry.", "ex.", "view.")
+DYNAMIC_PREFIXES = ("part.", "cat.", "prop.", "propval.", "entry.", "ex.", "view.", "action.", "mouse.")
 
 CALL_RE = re.compile(r'(?<![A-Za-z0-9_>.])tr([fn]?)\(\s*"((?:[^"\\]|\\.)*)"')
 # Only key-shaped literals. A general "..." pattern would pair the quote inside a

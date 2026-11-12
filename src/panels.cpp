@@ -88,8 +88,14 @@ std::vector<MenuItem> App::fileMenu() {
 }
 
 std::vector<MenuItem> App::editMenu() {
-    bool any = !selParts.empty() || !selWires.empty() || !selNotes.empty();
-    return {
+    bool any = !selParts.empty() || !selWires.empty() || !selNotes.empty() || !selAnnos.empty();
+    MenuItem annos;
+    annos.label = tr("menu.edit.add_anno");
+    annos.children.push_back(item(tr("anno.kind.rect"), [this]() { addAnno(AnnoKind::Rect); }));
+    annos.children.push_back(item(tr("anno.kind.line"), [this]() { addAnno(AnnoKind::Line); }));
+    annos.children.push_back(item(tr("anno.kind.circle"), [this]() { addAnno(AnnoKind::Circle); }));
+    annos.children.push_back(item(tr("anno.kind.text"), [this]() { addAnno(AnnoKind::Text); }));
+    std::vector<MenuItem> m = {
         item(tr("menu.edit.undo"), [this]() { undo(); }, sc("Z"), !undoStack.empty()),
         item(tr("menu.edit.redo"), [this]() { redo(); }, sc("⇧Z"), !redoStack.empty()),
         MenuItem::sep(),
@@ -101,7 +107,9 @@ std::vector<MenuItem> App::editMenu() {
         MenuItem::sep(),
         item(tr("menu.edit.select_all"), [this]() { selectAll(); }, sc("A")),
         item(tr("menu.edit.add_note"), [this]() { addNote(); }),
+        annos,
     };
+    return m;
 }
 
 std::vector<MenuItem> App::partMenu() {
@@ -144,6 +152,8 @@ std::vector<MenuItem> App::viewMenu() {
         sub(tr("menu.view.interface_size"), {scaleItem(tr("menu.view.scale.small"), 0.85f), scaleItem(tr("menu.view.scale.normal"), 1.0f),
                                             scaleItem(tr("menu.view.scale.large"), 1.2f), scaleItem(tr("menu.view.scale.xl"), 1.45f)}),
         sub(tr("menu.view.language"), langs),
+        MenuItem::sep(),
+        item(tr("menu.view.settings"), [this]() { openSettingsSheet(); }),
     };
 }
 
@@ -430,7 +440,7 @@ void App::drawInspector(Rect r) {
     };
     float lw = std::min(110 * s, w * 0.38f);
 
-    size_t nsel = selParts.size() + selWires.size() + selNotes.size();
+    size_t nsel = selParts.size() + selWires.size() + selNotes.size() + selAnnos.size();
     if (nsel == 1 && selParts.size() == 1) {
         PartInst* p = doc.part(*selParts.begin());
         if (p) {
@@ -555,11 +565,7 @@ void App::drawInspector(Rect r) {
                     if (cx + sw > x + w) { cx = x; y += sw + 6 * s; }
                     Rect b(cx, y, sw, sw);
                     bool cur = wr->color == cs[i];
-                    if (ui.button("wcol" + std::to_string(i), b, "", BTN_FLAT)) {
-                        checkpoint();
-                        if (Wire* ww = doc.wire(wid)) ww->color = cs[i];
-                        changed();
-                    }
+                    if (ui.button("wcol" + std::to_string(i), b, "", BTN_FLAT)) setWireColor(view, wid, cs[i]);
                     g.fillCircle(b.center(), sw * 0.38f, cs[i]);
                     g.strokeCircle(b.center(), sw * 0.38f, std::max(1.f, s), rgba(0, 0, 0, 60));
                     if (cur) g.strokeCircle(b.center(), sw * 0.48f, 2 * s, ui.th.accent);
@@ -582,7 +588,8 @@ void App::drawInspector(Rect r) {
                     if (cx + bwid > x + w) { cx = x; y += 32 * s; }
                     if (ui.button("tw" + lbl, Rect(cx, y, bwid, 26 * s), lbl, BTN_CHIP, std::fabs(wr->width - tw) < 0.1f)) {
                         checkpoint();
-                        doc.wire(wid)->width = tw;
+                        if (Wire* ww = doc.wire(wid)) ww->width = tw;
+                        rememberTraceWidth(view, tw);  // new traces keep this width
                         changed();
                     }
                     cx += bwid + 6 * s;
@@ -629,6 +636,66 @@ void App::drawInspector(Rect r) {
                 size_t pos;
                 while ((pos = nn->text.find("\\n")) != std::string::npos) nn->text.replace(pos, 2, "\n");
             }
+        }
+    } else if (nsel == 1 && selAnnos.size() == 1) {
+        Anno* a = doc.anno(*selAnnos.begin());
+        if (a) {
+            int aid = a->id;
+            g.text({x, y + 14 * s}, annoKindLabel(a->kind), 16 * s, ui.th.text, 0);
+            y += 34 * s;
+            if (a->kind == AnnoKind::Text) {
+                std::string t = a->text;
+                if (ui.textField("annotext" + std::to_string(aid), Rect(x, y, w, rowH), t, tr("anno.text"))) {
+                    checkpoint();
+                    if (Anno* aa = doc.anno(aid)) annoSetText(*aa, t);
+                    changed();
+                }
+                y += rowH + 6 * s;
+                auto bump = [&](float d) {
+                    checkpoint();
+                    if (Anno* aa = doc.anno(aid)) annoBumpTextSize(*aa, d);
+                    changed();
+                };
+                float bw = 46 * s;
+                if (ui.button("annofs-", Rect(x, y, bw, rowH), "A-", BTN_NORMAL, false, a->textSize > 33)) bump(-8);
+                if (ui.button("annofs+", Rect(x + w - bw, y, bw, rowH), "A+", BTN_NORMAL, false, a->textSize < 399)) bump(8);
+                g.text({x + w / 2, y + rowH / 2}, std::to_string((int)std::lround(a->textSize)), 13 * s, ui.th.textDim, 1);
+                y += rowH + 6 * s;
+            }
+            auto heading2 = [&](const std::string& t) {
+                y += 8 * s;
+                g.text({x, y + 9 * s}, t, 12 * s, ui.th.textDim, 0);
+                y += 22 * s;
+            };
+            heading2(tr("anno.stroke_color"));
+            float sw = 30 * s;
+            float cx = x;
+            const std::vector<uint32_t>& pal = annoPalette();
+            for (size_t i = 0; i < pal.size(); i++) {
+                if (cx + sw > x + w) { cx = x; y += sw + 6 * s; }
+                Rect b(cx, y, sw, sw);
+                bool cur = a->stroke == pal[i];
+                if (ui.button("ancol" + std::to_string(i), b, "", BTN_FLAT)) {
+                    checkpoint();
+                    if (Anno* aa = doc.anno(aid)) aa->stroke = pal[i];
+                    changed();
+                }
+                g.fillCircle(b.center(), sw * 0.38f, pal[i]);
+                g.strokeCircle(b.center(), sw * 0.38f, std::max(1.f, s), rgba(0, 0, 0, 60));
+                if (cur) g.strokeCircle(b.center(), sw * 0.48f, 2 * s, ui.th.accent);
+                cx += sw + 6 * s;
+            }
+            y += sw + 10 * s;
+            bool dashed = a->dashed;
+            if (ui.checkbox("annodash" + std::to_string(aid), Rect(x, y, w, rowH), tr("anno.dashed"), dashed)) {
+                checkpoint();
+                if (Anno* aa = doc.anno(aid)) aa->dashed = dashed;
+                changed();
+            }
+            y += rowH + 6 * s;
+            if (view == PCB) y += ui.wrappedText(Rect(x, y, w, 0), tr("anno.pcb_dashed"), ui.th.textDim, 12 * s) + 6 * s;
+            if (ui.button("delanno", Rect(x, y, w, rowH), tr("insp.btn.delete_anno"), BTN_NORMAL)) deleteSelection();
+            y += rowH + 12 * s;
         }
     } else if (nsel > 1) {
         g.text({x, y + 14 * s}, trn("insp.msg.items_selected", (long long)nsel), 16 * s, ui.th.text, 0);
@@ -714,7 +781,7 @@ void App::drawToolbar() {
     g.fillRect({0, r.y, (float)winW, std::max(1.f, s)}, ui.th.border);
     struct Tool { std::string id, icon, label; std::function<void()> fn; bool sel; bool enabled; std::string tip; };
     std::vector<Tool> tools;
-    bool anySel = !selParts.empty() || !selWires.empty() || !selNotes.empty();
+    bool anySel = !selParts.empty() || !selWires.empty() || !selNotes.empty() || !selAnnos.empty();
     if (compact) {
         tools.push_back({"t-parts", "parts", tr("tb.parts"), [this]() { drawerParts = !drawerParts; drawerInspector = drawerLayers = false; }, drawerParts, true, tr("tip.parts_bin")});
         tools.push_back({"t-layers", "layer", tr("tb.layers"), [this]() { drawerLayers = !drawerLayers; drawerInspector = drawerParts = drawerAI = false; }, drawerLayers, true, tr("tip.layers")});
@@ -722,6 +789,14 @@ void App::drawToolbar() {
             tools.push_back({"t-ai", "bolt", tr("tb.ai"), [this]() { drawerAI = !drawerAI; drawerInspector = drawerParts = drawerLayers = false; }, drawerAI, true, tr("tip.ai")});
         tools.push_back({"t-insp", "inspector", tr("tb.inspect"), [this]() { drawerInspector = !drawerInspector; drawerParts = drawerLayers = false; }, drawerInspector, true, tr("tip.inspector")});
     }
+    // Drawing tools: one button per tool, the active one highlighted. Esc (or the
+    // select button) leaves the tool and returns to plain selection.
+    tools.push_back({"t-sel", "select", tr("tb.select"), [this]() { setTool(TOOL_SELECT); }, tool == TOOL_SELECT,
+                     true, tr("tip.tool_select")});
+    tools.push_back({"t-rect", "rect", tr("tb.rect"), [this]() { setTool(TOOL_RECT); }, tool == TOOL_RECT, true, tr("tip.tool_rect")});
+    tools.push_back({"t-line", "line", tr("tb.line"), [this]() { setTool(TOOL_LINE); }, tool == TOOL_LINE, true, tr("tip.tool_line")});
+    tools.push_back({"t-circ", "circle", tr("tb.circle"), [this]() { setTool(TOOL_CIRCLE); }, tool == TOOL_CIRCLE, true, tr("tip.tool_circle")});
+    tools.push_back({"t-text", "text", tr("tb.text"), [this]() { setTool(TOOL_TEXT); }, tool == TOOL_TEXT, true, tr("tip.tool_text")});
     if (!compact || view != PCB) tools.push_back({"t-note", "note", tr("tb.note"), [this]() { addNote(); }, false, true, tr("tip.add_note")});
     tools.push_back({"t-rot", "rotate", tr("tb.rotate"), [this]() { rotateSelection(1); }, false, !selParts.empty(), tr("tip.rotate")});
     if (!compact) tools.push_back({"t-flip", "flip", tr("tb.flip"), [this]() { flipSelection(); }, false, !selParts.empty(), tr("tip.flip")});
@@ -810,6 +885,7 @@ void App::drawCanvasOverlay() {
         g.strokeRoundRect(r, 19 * s, std::max(1.f, s), ui.th.border);
         g.text(r.center(), hint, 15 * s, ui.th.textDim, 1);
     }
+    drawToolHint();
     float y = c.y + 12 * s;
     simNotesRect = Rect();
     if (simOn) {
