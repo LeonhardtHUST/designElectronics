@@ -1371,9 +1371,22 @@ void colorCodeTests(int& failures) {
     }
 }
 static double spiceSI(std::string s) {
-    while(!s.empty() && std::isspace((unsigned char)s.back())) s.pop_back();
-    double mul=1.0; if(!s.empty()) { char c=s.back(); if(c=='p') mul=1e-12; else if(c=='n') mul=1e-9; else if(c=='u' || c=='µ') mul=1e-6; else if(c=='m') mul=1e-3; else if(c=='k' || c=='K') mul=1e3; else if(c=='M') mul=1e6; else if(c=='G') mul=1e9; if(mul!=1.0) s.pop_back(); }
-    return std::atof(s.c_str())*mul;
+    while (!s.empty() && std::isspace((unsigned char)s.back())) s.pop_back();
+    double mul = 1.0;
+    bool utf8Micro = s.size() >= 2 && (unsigned char)s[s.size() - 2] == 0xC2 && (unsigned char)s.back() == 0xB5;
+    if (utf8Micro) { mul = 1e-6; s.resize(s.size() - 2); }
+    else if (!s.empty()) {
+        char c = s.back();
+        if (c == 'p') mul = 1e-12;
+        else if (c == 'n') mul = 1e-9;
+        else if (c == 'u') mul = 1e-6;
+        else if (c == 'm') mul = 1e-3;
+        else if (c == 'k' || c == 'K') mul = 1e3;
+        else if (c == 'M') mul = 1e6;
+        else if (c == 'G') mul = 1e9;
+        if (mul != 1.0) s.pop_back();
+    }
+    return std::atof(s.c_str()) * mul;
 }
 static int spiceCli(int argc, char** argv, int at) {
     if(at+1>=argc) { std::fprintf(stderr,"--spice-run requires a .dez file\\n"); return 2; }
