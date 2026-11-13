@@ -381,8 +381,6 @@ void App::drawStartScreen() {
      bx += tb.w + 8 * s;
         }
     }
-    float hintY = card.b() - 22 * s;
-    if (hintY > nw.b() + 14 * s + 80 * s) g.text({card.center().x, hintY}, tr("welcome.hint"), 11.5f * s, th.textDim, 1);
 }
 
 static bool endsWith(const std::string& s, const std::string& suf) {

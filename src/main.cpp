@@ -3147,6 +3147,7 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
         else if (g_shot.sheet == "account") g_app->openGitHubAccount();
         else if (g_shot.sheet == "embed") g_app->openEmbedSheet();
         else if (g_shot.sheet == "video") g_app->openVideoSheet();
+        else if (g_shot.sheet == "colorcode") g_app->openColorCodeTool();
         else if (g_shot.sheet == "upload")
             for (auto& p : g_app->doc.parts)
                 if (p.def->sim == "board") { g_app->openUploadSheet(p.id); break; }

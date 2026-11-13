@@ -2,6 +2,13 @@ Free, open-source electronics design for desktop and phone: breadboard, schemati
 
 📖 **Documentation:** https://rorretbolt.github.io/designElectronics/ · 🌐 **Try it in your browser:** https://rorretbolt.github.io/designElectronics/#app
 
+## What's new in 0.8.1
+
+- **Redrawn resistor preview.** The colour-code calculator now shows a compact axial resistor with rounded shoulders, a narrower waist, metallic leads and shaded colour bands that follow the body contour.
+- **Cleaner calculator layout.** Circular colour swatches, side-by-side resistance and tolerance fields on wider layouts, and a separate result panel replace the old flat block layout. The standalone tool no longer shows an unnecessary scrollbar, and its content scales to the available window height.
+- **Simpler start screen.** Removed the project-file/upload footer text from the welcome screen in both English and Chinese.
+- **Visual regression capture.** The screenshot command accepts `--sheet colorcode`; four-band and six-band layouts were captured and visually checked in addition to the self-tests.
+
 ## What's new in 0.8
 
 - **Optional ngspice precision analysis.** Desktop builds can load libngspice at runtime for `.tran`, `.ac` and `.dc` analysis without changing the existing real-time simulator.

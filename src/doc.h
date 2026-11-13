@@ -14,7 +14,7 @@
 constexpr const char* kFileFormat = "designElectronics";
 constexpr int kFileVersion = 3;  // 2 adds "annos"; 3 adds part "group" (hierarchy levels)
 constexpr const char* kFileExt = ".dez";
-constexpr const char* kAppVersion = "0.8.0";
+constexpr const char* kAppVersion = "0.8.1";
 
 struct PartInst {
     int id = 0;

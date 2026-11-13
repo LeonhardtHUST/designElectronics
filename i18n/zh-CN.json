@@ -1529,7 +1529,6 @@
   "welcome.open": "打开工程",
   "welcome.new": "新建工程",
   "welcome.restore": "恢复未保存的工程",
-  "welcome.hint": "一个工程就是一个 .dez 文件，不会上传任何内容。",
   "welcome.restore_failed": "未能恢复上次未保存的工程。",
   "menu.title.tools": "工具",
   "welcome.tools": "工具",

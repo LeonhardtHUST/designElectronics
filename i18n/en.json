@@ -1529,7 +1529,6 @@
   "welcome.open": "Open project",
   "welcome.new": "New project",
   "welcome.restore": "Restore unsaved work",
-  "welcome.hint": "A project is a single .dez file. Nothing is uploaded.",
   "welcome.restore_failed": "The unsaved project could not be restored.",
   "menu.title.tools": "Tools",
   "welcome.tools": "Tools",
