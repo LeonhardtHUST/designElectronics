@@ -121,6 +121,52 @@ void drawResistor(Gfx& gfx, Rect body, const cc::Bands& bands) {
     gfx.polyline(outline, .8f, rgba(117, 99, 70, 150), true);
 }
 
+std::string colorCalcResult(const cc::Spec& spec) {
+    std::string value = cc::formatOhms(spec.ohms) + "  " + (spec.bands >= 4 ? cc::formatTolerance(spec.tolerance) : "±20%");
+    if (spec.bands == 6) value += "  " + cc::formatPpm(spec.ppm);
+    return value;
+}
+
+struct ColorCalcLayout {
+    int bandColumns = 4;
+    int perRow = 1;
+    int rows = 1;
+    float captionHeight = 0;
+    float cardHeight = 0;
+    float fieldsHeight = 0;
+    float warningHeight = 0;
+    float resultHeight = 0;
+    std::vector<std::string> resultLines;
+    float height = 0;
+    bool wideFields = false;
+};
+
+ColorCalcLayout colorCalcLayout(UI& ui, float width, const cc::Spec& spec, int selected) {
+    ColorCalcLayout layout;
+    float scale = ui.s;
+    bool exact = true;
+    cc::Bands bands = cc::encode(spec, &exact);
+    selected = std::clamp(selected, 0, bands.n - 1);
+    std::string caption = trf("cc.band_caption", {std::to_string(selected + 1), tr(roleKey(bands.role[selected])),
+                                               colorName(bands.color[selected]), cc::meaning(bands.role[selected], bands.color[selected])});
+    layout.bandColumns = width < 210 * scale ? 2 : 4;
+    layout.cardHeight = (width < 300 * scale ? 178.f : 146.f) * scale + (layout.bandColumns == 2 ? 32 * scale : 0);
+    layout.resultLines = wrapText(*ui.g, colorCalcResult(spec), 20 * scale, std::max(20 * scale, width - 28 * scale), FONT_MONO);
+    layout.resultHeight = (86 + std::max(0, (int)layout.resultLines.size() - 1) * 27) * scale;
+    layout.captionHeight = ui.wrappedText(Rect(0, 0, width, 0), caption, ui.th.text, 15 * scale, false);
+    int colors = (int)cc::allowedColors(bands.role[selected], bands.n).size();
+    layout.perRow = std::max(1, std::min(colors, (int)std::floor(width / (46 * scale))));
+    layout.rows = (colors + layout.perRow - 1) / layout.perRow;
+    layout.wideFields = width >= 380 * scale;
+    layout.fieldsHeight = (spec.bands >= 4 && !layout.wideFields ? 140.f : 80.f) * scale;
+    cc::Spec shown;
+    if (!exact && cc::decode(bands, shown))
+        layout.warningHeight = ui.wrappedText(Rect(0, 0, width, 0), trf("cc.rounded", {std::to_string(bands.n), cc::formatOhms(shown.ohms)}), ui.th.danger, 14 * scale, false) + 6 * scale;
+    layout.height = layout.cardHeight + 14 * scale + layout.captionHeight + 8 * scale + layout.rows * 54 * scale + 12 * scale +
+                    layout.fieldsHeight + 12 * scale + (spec.bands == 6 ? 72 * scale : 0) + layout.warningHeight + layout.resultHeight + 16 * scale;
+    return layout;
+}
+
 }  // namespace
 
 // The calculator: a resistor with its bands (click one to select it), the palette for
@@ -134,20 +180,24 @@ bool App::colorCalcWidget(const std::string& id, float x, float& y, float w, cc:
     bool exact = true;
     cc::Bands bands = cc::encode(spec, &exact);
     sel = std::max(0, std::min(bands.n - 1, sel));
+    ColorCalcLayout layout = colorCalcLayout(ui, w, spec, sel);
 
     // ---- polished calculator card ----
     {
         const float cardPad = 14 * s;
-        Rect card(x, y, w, 146 * s);
+        Rect card(x, y, w, layout.cardHeight);
         g.fillRoundRect(Rect(card.x + 2 * s, card.y + 4 * s, card.w, card.h), 14 * s, rgba(0, 0, 0, 24));
         g.fillRoundRect(card, 14 * s, th.panel2);
         g.strokeRoundRect(card, 14 * s, std::max(1.f, s), th.border);
-        float bw = 38 * s, bg = 6 * s;
-        float bandButtons = 4 * bw + 3 * bg;
-        g.text({card.x + cardPad, card.y + 28 * s}, tr("cc.bands"), 12 * s, th.textDim, 0);
-        float bx0 = card.r() - cardPad - bandButtons;
+        float bg = 6 * s;
+        int columns = layout.bandColumns;
+        float bw = std::min(38 * s, (w - 2 * cardPad - (columns - 1) * bg) / columns);
+        float bandButtons = columns * bw + (columns - 1) * bg;
+        g.text({card.x + cardPad, card.y + 28 * s}, tr("cc.bands"), 14 * s, th.textDim, 0);
+        bool stackedBands = w < 300 * s;
+        float bx0 = stackedBands ? card.center().x - bandButtons / 2 : card.r() - cardPad - bandButtons;
         for (int k = 3; k <= 6; k++) {
-            Rect br(bx0 + (float)(k - 3) * (bw + bg), card.y + 14 * s, bw, 28 * s);
+            Rect br(bx0 + (float)((k - 3) % columns) * (bw + bg), card.y + ((stackedBands ? 46 : 14) + (k - 3) / columns * 32) * s, bw, 28 * s);
             if (ui.button(id + "n" + std::to_string(k), br, std::to_string(k), BTN_CHIP, spec.bands == k) && k != spec.bands) {
                 if (k == 3) spec.tolerance = 20;
                 else if (spec.bands == 3) spec.tolerance = 5;
@@ -155,7 +205,7 @@ bool App::colorCalcWidget(const std::string& id, float x, float& y, float w, cc:
                 changed = true;
             }
         }
-        float cy = card.y + 86 * s;
+        float cy = card.y + ((stackedBands ? 118 : 86) + (columns == 2 ? 32 : 0)) * s;
         float bodyW = std::min(252 * s, card.w * .66f);
         float bodyH = bodyW * .29f;
         Rect body(card.center().x - bodyW / 2, cy - bodyH / 2, bodyW, bodyH);
@@ -179,15 +229,14 @@ bool App::colorCalcWidget(const std::string& id, float x, float& y, float w, cc:
     }
 
     // ---- selected band and circular color palette ----
-    g.text({x, y + 12 * s}, trf("cc.band_caption", {std::to_string(sel + 1), tr(roleKey(bands.role[sel])), colorName(bands.color[sel]), cc::meaning(bands.role[sel], bands.color[sel])}), 13 * s, th.text, 0);
-    y += 28 * s;
+    y += ui.wrappedText(Rect(x, y, w, 0), trf("cc.band_caption", {std::to_string(sel + 1), tr(roleKey(bands.role[sel])), colorName(bands.color[sel]), cc::meaning(bands.role[sel], bands.color[sel])}), th.text, 15 * s) + 8 * s;
     std::vector<int> colors = cc::allowedColors(bands.role[sel], bands.n);
-    int perRow = std::max(1, std::min((int)colors.size(), (int)std::floor(w / (42 * s))));
-    float cell = w / perRow, sw = 27 * s;
+    int perRow = layout.perRow;
+    float cell = w / perRow, sw = 28 * s;
     for (size_t k = 0; k < colors.size(); k++) {
         int c = colors[k];
         float cx = x + (float)((int)k % perRow) * cell;
-        float cyy = y + (float)((int)k / perRow) * 46 * s;
+        float cyy = y + (float)((int)k / perRow) * 54 * s;
         Vec2 center{cx + cell / 2, cyy + sw / 2};
         bool on = bands.color[sel] == c;
         if (c == cc::NONE) {
@@ -198,7 +247,7 @@ bool App::colorCalcWidget(const std::string& id, float x, float& y, float w, cc:
             g.fillCircle({center.x - 7 * s, center.y - 8 * s}, 5 * s, rgba(255, 255, 255, 55));
         }
         g.strokeCircle(center, sw / 2, on ? 3 * s : std::max(1.f, s), on ? th.accent : th.border);
-        g.text({center.x, cyy + sw + 12 * s}, cc::meaning(bands.role[sel], c), 10.5f * s, on ? th.text : th.textDim, 1);
+        g.text({center.x, cyy + sw + 12 * s}, cc::meaning(bands.role[sel], c), 13 * s, on ? th.text : th.textDim, 1);
         Rect hit(cx, cyy - 3 * s, cell, 54 * s);
         ui.tooltip(hit, colorName(c));
         if (ui.hotRect(hit) && in.pressed && !on) {
@@ -209,53 +258,52 @@ bool App::colorCalcWidget(const std::string& id, float x, float& y, float w, cc:
         }
     }
     int rows = ((int)colors.size() + perRow - 1) / perRow;
-    y += (float)rows * 46 * s + 12 * s;
+    y += (float)rows * 54 * s + 12 * s;
 
     // ---- value controls ----
-    bool wideFields = w >= 380 * s;
-    float fieldsHeight = spec.bands >= 4 && !wideFields ? 126 * s : 72 * s;
+    bool wideFields = layout.wideFields;
+    float fieldsHeight = layout.fieldsHeight;
     Rect valueCard(x, y, w, fieldsHeight);
     g.fillRoundRect(valueCard, 12 * s, th.panel2);
     g.strokeRoundRect(valueCard, 12 * s, std::max(1.f, s), th.border);
     float innerX = x + 14 * s, innerW = w - 28 * s;
     float fieldW = wideFields && spec.bands >= 4 ? (innerW - 14 * s) / 2 : innerW;
-    g.text({innerX, y + 20 * s}, tr("cc.resistance"), 11 * s, th.textDim, 0);
+    g.text({innerX, y + 20 * s}, tr("cc.resistance"), 14 * s, th.textDim, 0);
     std::string text = cc::formatOhms(spec.ohms);
-    if (ui.textField(id + "val", Rect(innerX, y + 28 * s, fieldW, 32 * s), text)) {
+    if (ui.textField(id + "val", Rect(innerX, y + 32 * s, fieldW, 36 * s), text)) {
         double v = cc::parseResistance(text, -1);
         if (v >= 0 && std::fabs(v - spec.ohms) > 1e-12) { spec.ohms = v; changed = true; }
     }
     if (spec.bands >= 4) {
         float toleranceX = wideFields ? innerX + fieldW + 14 * s : innerX;
-        float toleranceY = wideFields ? y : y + 58 * s;
-        g.text({toleranceX, toleranceY + 20 * s}, tr("cc.tolerance"), 11 * s, th.textDim, 0);
+        float toleranceY = wideFields ? y : y + 60 * s;
+        g.text({toleranceX, toleranceY + 20 * s}, tr("cc.tolerance"), 14 * s, th.textDim, 0);
         std::vector<std::string> opts;
         for (double t : cc::toleranceChoices()) opts.push_back(cc::formatTolerance(t));
         std::string tv = cc::formatTolerance(spec.tolerance);
-        if (ui.comboField(id + "tol", Rect(toleranceX, toleranceY + 28 * s, fieldW, 32 * s), tv, opts, false)) { spec.tolerance = cc::parseTolerance(tv, 5); changed = true; }
+        if (ui.comboField(id + "tol", Rect(toleranceX, toleranceY + 32 * s, fieldW, 36 * s), tv, opts, false)) { spec.tolerance = cc::parseTolerance(tv, 5); changed = true; }
     }
     y += valueCard.h + 12 * s;
     if (spec.bands == 6) {
-        g.text({x, y + 12 * s}, tr("cc.tempco"), 11 * s, th.textDim, 0);
+        g.text({x, y + 12 * s}, tr("cc.tempco"), 14 * s, th.textDim, 0);
         std::vector<std::string> opts;
         for (int t : cc::tempcoChoices()) opts.push_back(cc::formatPpm(t));
         std::string pv = cc::formatPpm(spec.ppm);
-        if (ui.comboField(id + "ppm", Rect(x, y + 20 * s, w, 32 * s), pv, opts, false)) { spec.ppm = cc::parsePpm(pv, 100); changed = true; }
-        y += 64 * s;
+        if (ui.comboField(id + "ppm", Rect(x, y + 26 * s, w, 36 * s), pv, opts, false)) { spec.ppm = cc::parsePpm(pv, 100); changed = true; }
+        y += 72 * s;
     }
 
     // ---- result card ----
     cc::Spec shown;
-    if (!exact && cc::decode(bands, shown)) y += ui.wrappedText(Rect(x, y, w, 0), trf("cc.rounded", {std::to_string(bands.n), cc::formatOhms(shown.ohms)}), th.danger, 12 * s) + 6 * s;
-    Rect result(x, y, w, 72 * s);
+    if (!exact && cc::decode(bands, shown)) y += ui.wrappedText(Rect(x, y, w, 0), trf("cc.rounded", {std::to_string(bands.n), cc::formatOhms(shown.ohms)}), th.danger, 14 * s) + 6 * s;
+    Rect result(x, y, w, layout.resultHeight);
     g.fillRoundRect(result, 12 * s, rgba(28, 116, 222, 20));
     g.strokeRoundRect(result, 12 * s, std::max(1.f, s), withAlpha(th.accent, 80));
-    std::string read = cc::formatOhms(spec.ohms);
-    if (spec.bands >= 4) read += "  " + cc::formatTolerance(spec.tolerance);
-    else read += "  ±20%";
-    if (spec.bands == 6) read += "  " + cc::formatPpm(spec.ppm);
-    g.text({result.x + 14 * s, result.y + 25 * s}, read, 16 * s, th.text, 0, FONT_MONO);
-    g.text({result.x + 14 * s, result.y + 50 * s}, trf("cc.marking", {cc::resistorMarking(spec.ohms, spec.tolerance)}), 11 * s, th.textDim, 0, FONT_MONO);
+    for (size_t line = 0; line < layout.resultLines.size(); ++line)
+        g.text({result.x + 14 * s, result.y + (29 + 27 * line) * s}, layout.resultLines[line], 20 * s, th.text, 0, FONT_MONO);
+    std::string marking = trf("cc.marking", {cc::resistorMarking(spec.ohms, spec.tolerance)});
+    g.text({result.x + 14 * s, result.b() - 24 * s}, g.ellipsize(marking, 14 * s, std::max(0.f, w - 28 * s), FONT_MONO), 14 * s, th.textDim, 0, FONT_MONO);
+    ui.tooltip(result, marking);
     y += result.h + 16 * s;
     return changed;
 
@@ -267,31 +315,36 @@ void App::openColorCodeTool() {
         PartInst* p = doc.part(*selParts.begin());
  if (p && p->type == "resistor") toolCalc = cc::specFromProps(mergedProps(p->type, p->props));
     }
-    ui.openSheet("tool-colorcode", tr("tool.colorcode.name"), 560, 560, [this](Rect body) {
-        float originalScale = ui.s;
-        ui.s = std::min(ui.s, body.h / 540.f);
+    ui.openSheet("tool-colorcode", tr("tool.colorcode.name"), 640, 700, [this](Rect body) {
         float s = ui.s;
         auto& th = ui.th;
-        float x = body.x, w = body.w;
-        float y = body.y + 10 * s;
-        y += ui.wrappedText(Rect(x, y, w, 0), tr("tool.colorcode.desc"), th.textDim, 12.5f * s) + 10 * s;
-        colorCalcWidget("toolcc", x, y, w, toolCalc, toolCalcBand);
- y += 6 * s;
- PartInst* target = nullptr;
+        PartInst* target = nullptr;
         if (!startScreen && selParts.size() == 1) {
-     PartInst* p = doc.part(*selParts.begin());
-     if (p && p->type == "resistor") target = p;
+            PartInst* part = doc.part(*selParts.begin());
+            if (part && part->type == "resistor") target = part;
         }
+        auto contentHeight = [&](float width) {
+            float description = ui.wrappedText(Rect(0, 0, width, 0), tr("tool.colorcode.desc"), th.textDim, 14.5f * s, false);
+            float footer = target ? 40 * s : ui.wrappedText(Rect(0, 0, width, 0), tr("cc.apply_hint"), th.textDim, 14 * s, false);
+            return 20 * s + description + colorCalcLayout(ui, width, toolCalc, toolCalcBand).height + 6 * s + footer;
+        };
+        float width = body.w;
+        if (contentHeight(width) > body.h) width -= 16 * s;
+        float height = contentHeight(width);
+        float offset = ui.beginScroll("tool-cc-body", body, height);
+        float x = body.x, y = body.y + offset + 10 * s;
+        y += ui.wrappedText(Rect(x, y, width, 0), tr("tool.colorcode.desc"), th.textDim, 14.5f * s) + 10 * s;
+        colorCalcWidget("toolcc", x, y, width, toolCalc, toolCalcBand);
+        y += 6 * s;
         if (target) {
-     int pid = target->id;
-     if (ui.button("tool-cc-apply", Rect(x, y, w, 38 * s), trf("cc.apply", {target->label}), BTN_PRIMARY)) {
-         setPartProps(pid, cc::propsFromSpec(toolCalc));
-         ui.toast(trf("cc.applied", {target->label}));
-     }
- } else {
-     y += ui.wrappedText(Rect(x, y, w, 0), tr("cc.apply_hint"), th.textDim, 12 * s);
+            int partId = target->id;
+            if (ui.button("tool-cc-apply", Rect(x, y, width, 40 * s), trf("cc.apply", {target->label}), BTN_PRIMARY)) {
+                setPartProps(partId, cc::propsFromSpec(toolCalc));
+                ui.toast(trf("cc.applied", {target->label}));
+            }
+        } else {
+            ui.wrappedText(Rect(x, y, width, 0), tr("cc.apply_hint"), th.textDim, 14 * s);
         }
-
-        ui.s = originalScale;
+        ui.endScroll();
     });
 }

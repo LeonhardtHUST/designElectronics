@@ -1225,8 +1225,8 @@ void makeHustBreadboard(PartDef& d) {
             std::vector<int> top, bot;
             for (int r = 0; r < 5; r++) {
                 std::string a(1, "jihgf"[r]), b(1, "edcba"[r]);
-                top.push_back(addHole(tile + a + col, a + col, {c * P, y0 + kFieldTop + r * P}));
-                bot.push_back(addHole(tile + b + col, b + col, {c * P, y0 + kFieldBot + r * P}));
+                top.push_back(addHole(tile + a + col, tile + a + col, {c * P, y0 + kFieldTop + r * P}));
+                bot.push_back(addHole(tile + b + col, tile + b + col, {c * P, y0 + kFieldBot + r * P}));
             }
             d.buses.push_back(top);  // one net per column, above the channel
             d.buses.push_back(bot);  // one net per column, below the channel
@@ -1237,7 +1237,7 @@ void makeHustBreadboard(PartDef& d) {
             for (int i = 0; i < kRowPins; i++) {
                 int net = i < 15 ? 0 : i < 35 ? 1 : 2;  // the 3-4-3 split
                 std::string id = tile + (s ? "l" : "u") + std::to_string(i + 1);
-                std::string name = std::string(s ? "bot " : "top ") + std::to_string(i + 1);
+                std::string name = id;
                 nets[net].push_back(addHole(id, name, {kEdgeX + i * P, y}));
                 int blk = (i + 1) / 5;  // 1…10, the block this hole closes
                 if ((i + 1) % 5 == 0 && i + 1 < kRowPins) {

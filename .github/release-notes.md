@@ -1,6 +1,6 @@
 Free, open-source electronics design for desktop and phone: breadboard, schematic and PCB views, live simulation, Gerber export, version history and an MCP server for AI assistants.
 
-📖 **Documentation:** https://rorretbolt.github.io/designElectronics/ · 🌐 **Try it in your browser:** https://rorretbolt.github.io/designElectronics/#app
+📖 **Documentation:** https://leonhardthust.github.io/designElectronics/ · 🌐 **Try it in your browser:** https://leonhardthust.github.io/designElectronics/app/
 
 ## What's new in 0.8.1
 
@@ -57,7 +57,7 @@ The project format is version 3 (parts gained an optional `group`); version 1 an
 - **A format, not a second language baked in.** Every string is a key in `i18n/*.json`, compiled into the binary so the web and mobile builds carry both languages with nothing extra to ship. Drop `i18n/xx.json` next to the executable and a new language appears in the menu — no rebuild, no code change.
 - **The parts library too.** All 352 part types are translated — names, categories, property labels and the long notes for the 74xx/CD4000 logic, the boards and the modules — while a design's own text (labels, notes, values like `470Ω` or `Yellow`) stays exactly as you wrote it. A design made in one language opens identically in the other.
 - **Authoring tools.** `designElectronics --export-i18n ./i18n` writes a complete template, including the part-library keys a source scan cannot see; `tools/i18n_check.py --strict`, now part of CI, catches a missing key, a mismatched `{0}` count and keys nobody uses.
-- **A Chinese README and landing page** — [README.zh-CN.md](https://github.com/LeonhardtHUST/designElectronics/blob/main/README.zh-CN.md) · [中文介绍](https://rorretbolt.github.io/designElectronics/zh/).
+- **A Chinese README and landing page** — [README.zh-CN.md](https://github.com/LeonhardtHUST/designElectronics/blob/main/README.zh-CN.md) · [中文介绍](https://leonhardthust.github.io/designElectronics/zh/).
 
 ## What's new in 0.4
 
@@ -99,6 +99,6 @@ These builds aren't code-signed yet, so your system will ask before opening them
 - **Windows:** unzip and run `designElectronics.exe`. If SmartScreen appears, click **More info ▸ Run anyway**. Keep the `assets` folder next to the exe.
 - **Linux:** `tar xzf designElectronics-Linux-x86_64.tar.gz && ./designElectronics/designElectronics`.
 
-Start with **File ▸ Examples** (555 blinker, ESP32 blink, Raspberry Pi LED…) or the [quick start](https://rorretbolt.github.io/designElectronics/#quickstart).
+Start with **File ▸ Examples** (555 blinker, ESP32 blink, Raspberry Pi LED…) or the [quick start](https://leonhardthust.github.io/designElectronics/#quickstart).
 
 GitHub sync is available in the macOS and Linux builds; Windows builds have local version history only for now.

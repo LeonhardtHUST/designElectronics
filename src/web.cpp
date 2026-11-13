@@ -20,7 +20,7 @@
 
 namespace {
 
-constexpr const char* kWebBase = "https://rorretbolt.github.io/designElectronics/";
+constexpr const char* kWebBase = "https://leonhardthust.github.io/designElectronics/";
 
 // ---------------------------------------------------------------------------
 // Minimal raw-DEFLATE encoder (RFC 1951): LZ77 with a hash chain and the fixed

@@ -13,7 +13,7 @@ It runs locally over stdin/stdout. No server, account or network is involved.
 
 The desktop app has an **AI** tab that runs Claude Code (or Codex CLI, Gemini CLI, or a custom
 command) for you, connected live to the open design — see the
-[docs](https://rorretbolt.github.io/designElectronics/#ai). Under the hood it starts
+[docs](https://leonhardthust.github.io/designElectronics/en/#ai). Under the hood it starts
 `designElectronics --mcp --connect <port> --token <token>`, which forwards every tool call to
 the running app instead of working on a private copy.
 

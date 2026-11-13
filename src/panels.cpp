@@ -534,10 +534,10 @@ void App::drawInspector(Rect r) {
             if (!p->def->isBreadboard && p->def->pins.size() <= 40) {
                 for (size_t i = 0; i < p->def->pins.size(); i++) {
                     int net = conn.netOf(p->id, (int)i);
-                    std::string line = p->def->pins[i].name + "  →  " + conn.netName(net);
+                    std::string line = p->pinAddress((int)i) + "  →  " + conn.netName(net);
                     if (simOn && net >= 0 && net < (int)sim.netVoltage.size())
                         line += "  (" + num(sim.netVoltage[(size_t)net], 2) + " V)";
-                    g.text({x + 6 * s, y + 9 * s}, line, 12 * s, conn.pinConnectedInView(view, p->id, (int)i) ? ui.th.text : ui.th.textDim, 0);
+                    g.text({x + 6 * s, y + 9 * s}, line, 12 * s, conn.pinConnectedInView(view, p->id, (int)i) ? ui.th.text : ui.th.textDim, 0, FONT_MONO);
                     y += 19 * s;
                 }
             }
@@ -563,9 +563,9 @@ void App::drawInspector(Rect r) {
                 std::string t = tr(e == 0 ? "insp.msg.from" : "insp.msg.to");
                 if (end.attached()) {
                     const PartInst* p = doc.part(end.part);
-                    t += p ? p->label + " · " + p->def->pins[(size_t)end.pin].name : "?";
+                    t += p ? p->pinAddress(end.pin) : "?";
                 } else t += tr("insp.msg.not_attached");
-                g.text({x, y + 9 * s}, t, 12.5f * s, end.attached() ? ui.th.text : ui.th.danger, 0);
+                g.text({x, y + 9 * s}, t, 12.5f * s, end.attached() ? ui.th.text : ui.th.danger, 0, FONT_MONO);
                 y += 20 * s;
             }
             if (wr->view == BB) {

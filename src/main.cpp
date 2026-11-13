@@ -20,6 +20,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <map>
 #include <string>
 
@@ -27,6 +28,7 @@
 #include "colorcode.h"
 #include "history.h"
 #include "i18n.h"
+#include "licenses.h"
 #include "logo.h"
 #include "mcp.h"
 #include "ngspice_backend.h"
@@ -55,6 +57,9 @@ void annoTests(int& failures);
 void hierarchyTests(int& failures);
 void hitTests(int& failures);
 void configTests(int& failures);
+void partCopyTests(int& failures);
+void licenseTests(int& failures);
+void fontSizeTests(int& failures);
 void toolTests(int& failures);
 void keyTests(int& failures);
 void textSelectionTests(int& failures);
@@ -117,6 +122,72 @@ void partDataTests(int& failures) {
         }
         printf("  lesson breadboard: %d holes off grid, %d/%d IC legs in holes\n", offGrid, inHole, (int)ic->pins.size());
         check(offGrid == 0 && inHole == (int)ic->pins.size(), "IC legs land in the breadboard holes", failures);
+        std::set<std::string> names;
+        bool completeNames = true;
+        for (const auto& hole : bb->pins) {
+            names.insert(hole.name);
+            completeNames = completeNames && hole.name == hole.id;
+        }
+        check(completeNames && names.size() == bb->pins.size(),
+              "lesson breadboard hole labels include unique tile prefixes", failures);
+        TB isolated;
+        int breadboard = isolated.add("breadboard", {{"size", "HUST EIC Lesson"}});
+        Connectivity conn;
+        conn.build(isolated.d);
+        std::set<int> fieldNets, railNets;
+        bool topology = true;
+        for (int tile = 1; tile <= 4; ++tile) {
+            std::string prefix = std::to_string(tile);
+            auto net = [&](const std::string& suffix) { return conn.netOf(breadboard, bb->pinIndex(prefix + suffix)); };
+            int field = net("j1"), rail = net("u1");
+            fieldNets.insert(field);
+            railNets.insert(rail);
+            topology = topology && field >= 0 && rail >= 0 && field == net("f1") && field != net("e1") &&
+                       field != net("j2") && rail == net("u15") && rail != net("u16") &&
+                       net("u16") == net("u35") && net("u16") != net("u36") &&
+                       net("u36") == net("u50") && rail != net("l1");
+        }
+        check(topology && fieldNets.size() == 4 && railNets.size() == 4,
+              "tile-prefixed holes retain isolated tiles, five-hole columns and segmented rails", failures);
+        const PartInst* tiled = isolated.d.part(breadboard);
+        std::string stored = isolated.d.serialize(true);
+        bool addresses = true;
+        std::set<std::string> displayed;
+        for (size_t index = 0; index < bb->pins.size(); ++index) displayed.insert(tiled->pinAddress((int)index));
+        for (int tile = 1; tile <= 4; ++tile) {
+            std::string number = std::to_string(tile);
+            addresses = addresses && tiled->pinAddress(bb->pinIndex(number + "j1")) == "BB1.T" + number + ".j1" &&
+                        tiled->pinAddress(bb->pinIndex(number + "u1")) == "BB1.T" + number + ".u1" &&
+                        tiled->pinAddress(bb->pinIndex(number + "l50")) == "BB1.T" + number + ".l50";
+        }
+        check(addresses && displayed.size() == bb->pins.size(),
+              "tiled pin addresses use unique BB1.Tn.hole notation", failures);
+        check(stored == isolated.d.serialize(true), "display formatting never changes stored pins or connections", failures);
+        PartInst single;
+        single.type = "breadboard";
+        single.props = {{"size", "half+"}};
+        single.label = "BB1";
+        single.refresh();
+        check(single.pinAddress(single.def->pinIndex("j1")) == "BB1.j1" &&
+                  single.pinAddress(single.def->pinIndex("tp1")) == "BB1.tp1",
+              "single-board pin addresses omit the tile level", failures);
+        PartInst chip;
+        chip.type = "74hc00";
+        chip.label = "U1";
+        chip.refresh();
+        check(chip.pinAddress(0) == "U1." + chip.def->pins[0].name &&
+                  chip.pinAddress(-1) == "U1.?" && chip.pinAddress((int)chip.def->pins.size()) == "U1.?",
+              "ordinary pin names stay intact and invalid display indices are safe", failures);
+        int jumper = isolated.add("resistor");
+        isolated.wire(breadboard, "2j1", jumper, "pin0");
+        isolated.d.wires.back().view = BB;
+        isolated.d.syncWireEnds();
+        Document reloaded;
+        std::string error;
+        bool loaded = reloaded.deserialize(isolated.d.serialize(true), &error);
+        check(loaded && reloaded.wires.size() == 1 && reloaded.wires[0].ends[0].part == breadboard &&
+                  reloaded.wires[0].ends[0].pin == bb->pinIndex("2j1"),
+              "tile-qualified breadboard wire endpoints survive project save/load", failures);
     }
     {   // an SMD chip and an SMD resistor on a board: route, DRC, Gerber paste layer
         TB t;
@@ -1256,6 +1327,62 @@ void imageAnnoTests(int& failures) {
     }
 }
 
+void licenseTests(int& failures) {
+    printf("Open-source licenses and fork attribution\n");
+    auto documents = licenseDocuments();
+    std::map<std::string, std::string> texts(documents.begin(), documents.end());
+    check(documents.size() == 3 && texts.count("LICENSE") && texts.count("THIRD_PARTY_NOTICES.md") && texts.count("CREDITS.md"),
+          "project license, third-party notices and credits are embedded offline", failures);
+    check(texts["LICENSE"].find("Copyright (c) 2026 Nesara Hippla") != std::string::npos &&
+              texts["LICENSE"].find("THE SOFTWARE IS PROVIDED") != std::string::npos,
+          "the original author and complete MIT disclaimer are retained", failures);
+    check(texts["THIRD_PARTY_NOTICES.md"].find("SIL OPEN FONT LICENSE") != std::string::npos &&
+              texts["THIRD_PARTY_NOTICES.md"].find("CC0") != std::string::npos &&
+              texts["THIRD_PARTY_NOTICES.md"].find("Google") != std::string::npos,
+          "embedded notices include font, video and image-library license texts", failures);
+    check(texts["CREDITS.md"].find("https://github.com/LeonhardtHUST/designElectronics") != std::string::npos &&
+              texts["CREDITS.md"].find("https://github.com/rORrEtboLt/designElectronics") != std::string::npos,
+          "credits identify this fork separately from the upstream project", failures);
+    App app;
+    app.scratchSession = true;
+    app.showAbout();
+    check(app.ui.sheetOpen("about"), "about information opens in a scrollable sheet", failures);
+    openSourceLicenses(app.ui);
+    check(app.ui.sheetOpen("licenses"), "offline license reader opens from the shared UI entry point", failures);
+}
+
+void partCopyTests(int& failures) {
+    printf("Part description style\n");
+    i18n::setLang("zh-CN");
+    bool compact = true;
+    size_t checked = 0;
+    for (const auto& entry : partLibrary()) {
+        auto def = getPartDef(entry.type, entry.props);
+        if (!def || !i18n::exists(("part." + def->type + ".desc").c_str())) continue;
+        ++checked;
+        compact = compact && partDesc(*def).find("。") == std::string::npos;
+    }
+    check(checked > 0 && compact, "Chinese part descriptions join clauses without full stops", failures);
+    auto motion = getPartDef("hcsr501", {});
+    std::string motionText = motion ? partDesc(*motion) : "";
+    check(motionText.find("3.3V") != std::string::npos && motionText.find("移动") != std::string::npos &&
+              motionText.find("检查器") != std::string::npos && motionText.find("支持仿真") != std::string::npos,
+          "motion sensor description keeps voltage, controls and simulation support", failures);
+    auto timer = getPartDef("timer555", {});
+    check(timer && partDesc(*timer).find("https://www.ti.com/lit/ds/symlink/ne555.pdf") != std::string::npos,
+          "description editing preserves complete datasheet URLs", failures);
+    auto counter = getPartDef("cd40192", {});
+    std::string counterText = counter ? partDesc(*counter) : "";
+    check(counterText.find("~PL") != std::string::npos && counterText.find("J1-J4") != std::string::npos &&
+              counterText.find("CARRY") != std::string::npos && counterText.find("BORROW") != std::string::npos &&
+              counterText.find("Q1") != std::string::npos && counterText.find("半个时钟周期") != std::string::npos,
+          "counter description keeps control pins and cascade timing", failures);
+    auto pinout = getPartDef("ads1115", {});
+    check(pinout && partDesc(*pinout).find("仿真器将其视为未连接") != std::string::npos,
+          "description editing preserves pinout-only simulation limitations", failures);
+    i18n::setLang("en");
+}
+
 // ---- colour code calculator, component markings, monospaced ink ----
 void colorCodeTests(int& failures) {
     printf("Colour code and markings\n");
@@ -1370,6 +1497,7 @@ void colorCodeTests(int& failures) {
         i18n::setLang("en");
     }
 }
+#if DE_NGSPICE_DESKTOP
 static double spiceSI(std::string s) {
     while (!s.empty() && std::isspace((unsigned char)s.back())) s.pop_back();
     double mul = 1.0;
@@ -1398,6 +1526,7 @@ static int spiceCli(int argc, char** argv, int at) {
     FILE* f=outPath.empty()?stdout:std::fopen(outPath.c_str(),"w"); if(!f){std::fprintf(stderr,"cannot write %s\\n",outPath.c_str());return 5;}
     std::fprintf(f,"scale"); for(auto& n:r.vecNames) std::fprintf(f,",%s",n.c_str()); std::fprintf(f,"\n"); for(size_t row=0;row<r.scale.size();row++){std::fprintf(f,"%.12g",r.scale[row]); for(auto& col:r.data) std::fprintf(f,",%.12g",row<col.size()?col[row]:0.0); std::fprintf(f,"\n");} if(f!=stdout)std::fclose(f); return 0;
 }
+#endif
 int selftest() {
     int failures = 0;
     // The assertions below match the English source strings, so pin the language.
@@ -1504,9 +1633,13 @@ int selftest() {
     }
     partDataTests(failures);
     modelTests(failures);
+    partCopyTests(failures);
+    licenseTests(failures);
     simTests(failures);
     spiceExportTests(failures);
+#if DE_NGSPICE_DESKTOP
     ngspiceBackendTests(failures);
+#endif
     colorCodeTests(failures);
     historyTests(failures);
     layerTests(failures);
@@ -1518,6 +1651,7 @@ int selftest() {
     textModeTests(failures);
     menuTests(failures);
     configTests(failures);
+    fontSizeTests(failures);
     toolTests(failures);
     shapeToolTests(failures);
     imageTests(failures);
@@ -2421,6 +2555,40 @@ struct PrefsGuard {
     }
 };
 
+void fontSizeTests(int& failures) {
+    printf("Interface font size\n");
+    check(normalizedUIFontSize(12) == 12 && normalizedUIFontSize(14) == 14 && normalizedUIFontSize(20) == 20,
+          "font sizes accept the supported range", failures);
+    check(normalizedUIFontSize(0) == 14 && normalizedUIFontSize(-1) == 14 && normalizedUIFontSize(100) == 14 &&
+              normalizedUIFontSize(std::numeric_limits<long long>::max()) == 14 &&
+              normalizedUIFontSize(std::numeric_limits<long long>::min()) == 14,
+          "invalid or overflowing font sizes fall back to default", failures);
+    PrefsGuard guard;
+    const long long original = settingsGetInt("appearance.font_size", 14);
+    App first;
+    first.setUIFontSize(18);
+    App second;
+    second.loadUIFontSize();
+    check(second.uiFontSize == 18 && settingsGetInt("appearance.font_size", 14) == 18,
+          "font preference persists and loads into a fresh app", failures);
+    second.scratchSession = true;
+    second.setUIFontSize(20);
+    check(second.uiFontSize == 20 && settingsGetInt("appearance.font_size", 14) == 18,
+          "screenshot font overrides never change stored preferences", failures);
+    first.setUIFontSize(14);
+    second.loadUIFontSize();
+    check(second.uiFontSize == 14, "reset restores the default font size", failures);
+    settingsSetInt("appearance.font_size", std::numeric_limits<long long>::max());
+    second.loadUIFontSize();
+    check(second.uiFontSize == 14, "oversized preference values are validated before conversion", failures);
+    settingsSetInt("appearance.font_size", original);
+    toml::Doc roundTrip;
+    roundTrip.setInt("appearance.font_size", 18);
+    toml::Doc restored;
+    check(restored.parse(roundTrip.dump(), nullptr) && restored.getInt("appearance.font_size", 14) == 18,
+          "font preference survives a TOML save/load round trip", failures);
+}
+
 // ---- markup tools and the wire colour new wires inherit ----
 void toolTests(int& failures) {
     printf("Markup tools\n");
@@ -2887,7 +3055,9 @@ struct Screenshot {
     int view = -1;
     bool sim = false, route = false, tidy = false;
     int w = 0, h = 0;
+    int fontSize = 0;
     std::string drawer;
+    std::string search;
     int select = -1;
     int selectAnno = -1;  // index into the annotations of the loaded design
     std::string menu;
@@ -3041,8 +3211,8 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
             return runMcpServer(port, token) == 0 ? SDL_APP_SUCCESS : SDL_APP_FAILURE;
         }
         if (a == "--selftest") return selftest() == 0 ? SDL_APP_SUCCESS : SDL_APP_FAILURE;
-        if (a == "--spice-run") return spiceCli(argc, argv, i) == 0 ? SDL_APP_SUCCESS : SDL_APP_FAILURE;
 #if DE_NGSPICE_DESKTOP
+        if (a == "--spice-run") return spiceCli(argc, argv, i) == 0 ? SDL_APP_SUCCESS : SDL_APP_FAILURE;
         if (a == "--spice-xcheck") {
             if (i + 1 >= argc) return SDL_APP_FAILURE;
             return spiceCrossCheck(argv[++i]) == 0 ? SDL_APP_SUCCESS : SDL_APP_FAILURE;
@@ -3058,10 +3228,12 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
         else if (a == "--tidy") g_shot.tidy = true;
         else if (a == "--frames") g_shot.frames = std::atoi(next().c_str());
         else if (a == "--drawer") g_shot.drawer = next();
+        else if (a == "--search") g_shot.search = next();
         else if (a == "--select") g_shot.select = std::atoi(next().c_str());
         else if (a == "--select-anno") g_shot.selectAnno = std::atoi(next().c_str());
         else if (a == "--menu") g_shot.menu = next();
         else if (a == "--sheet") g_shot.sheet = next();
+        else if (a == "--font-size") g_shot.fontSize = std::atoi(next().c_str());
         else if (a == "--open-code") g_shot.openCode = true;
         else if (a == "--ai") g_shot.ai = next();
         else if (a == "--events") {
@@ -3120,6 +3292,8 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
         if (g_shot.sim) g_app->simOn = true;
     }
     if (!g_shot.out.empty()) {
+        if (g_shot.fontSize != 0) g_app->setUIFontSize(g_shot.fontSize);
+        g_app->search = g_shot.search;
         if (g_shot.w > 0) SDL_SetWindowSize(g_app->win, g_shot.w, g_shot.h);
         if (g_shot.example >= 0) {
             g_app->doc.clear();
@@ -3148,6 +3322,9 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
         else if (g_shot.sheet == "embed") g_app->openEmbedSheet();
         else if (g_shot.sheet == "video") g_app->openVideoSheet();
         else if (g_shot.sheet == "colorcode") g_app->openColorCodeTool();
+        else if (g_shot.sheet == "settings") g_app->openSettingsSheet();
+        else if (g_shot.sheet == "about") g_app->showAbout();
+        else if (g_shot.sheet == "licenses") openSourceLicenses(g_app->ui);
         else if (g_shot.sheet == "upload")
             for (auto& p : g_app->doc.parts)
                 if (p.def->sim == "board") { g_app->openUploadSheet(p.id); break; }

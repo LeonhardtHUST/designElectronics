@@ -38,6 +38,23 @@ std::string fileBaseName(const std::string& path) {
 // Document
 // ---------------------------------------------------------------------------
 
+std::string PartInst::pinAddress(int index) const {
+    if (!def || index < 0 || index >= (int)def->pins.size()) return label + ".?";
+    const PinDef& pin = def->pins[(size_t)index];
+    if (def->isBreadboard) {
+        bool tiled = prop("size") == "HUST EIC Lesson" || def->title == "HUST EIC Lesson";
+        if (tiled && pin.id.size() >= 3 && pin.id[0] >= '1' && pin.id[0] <= '4' &&
+            std::string("abcdefghijul").find(pin.id[1]) != std::string::npos) {
+            bool numbered = true;
+            for (size_t digit = 2; digit < pin.id.size(); ++digit)
+                if (pin.id[digit] < '0' || pin.id[digit] > '9') numbered = false;
+            if (numbered) return label + ".T" + pin.id.substr(0, 1) + "." + pin.id.substr(1);
+        }
+        return label + "." + pin.id;
+    }
+    return label + "." + (pin.name.empty() ? pin.id : pin.name);
+}
+
 void Document::clear() {
     uid.clear();
     git = GitLink();

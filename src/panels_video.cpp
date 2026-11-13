@@ -201,7 +201,7 @@ bool App::renderVideoFrame() {
     drawCanvas(v, cam[v], vp, true);
     if (J.watermark) {
         float m = 28 * u, lg = 40 * u, px = 22 * u;
-        const char* link = "rorretbolt.github.io/designElectronics";
+        const char* link = "leonhardthust.github.io/designElectronics";
         float x = W - m - g.textWidth(link, px);
         uint32_t ink = v == PCB ? rgba(255, 255, 255, 150) : rgba(30, 40, 60, 130);
         drawLogo(g, Rect(x - lg - 10 * u, H - m - lg, lg, lg), 0.75f);

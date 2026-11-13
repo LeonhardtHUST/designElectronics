@@ -9,6 +9,16 @@
 #include "app.h"
 #include "i18n.h"
 #include "keys.h"
+#include "settings.h"
+
+void App::loadUIFontSize() {
+    uiFontSize = normalizedUIFontSize(settingsGetInt("appearance.font_size", 14));
+}
+
+void App::setUIFontSize(int value) {
+    uiFontSize = normalizedUIFontSize(value);
+    if (!scratchSession) settingsSetInt("appearance.font_size", uiFontSize);
+}
 
 void App::openSettingsSheet() {
     captureChord = -1;
@@ -19,9 +29,36 @@ void App::openSettingsSheet() {
         float rowH = 36 * s;
         // The sheet holds more rows than fit on a short window, so it scrolls: measure
         // the paragraph texts first, then let the scroll region own the offset.
-        float notesH = ui.wrappedText(Rect(x, 0, w, 0), tr("settings.mouse_note"), th.textDim, 12 * s, false) +
-                       ui.wrappedText(Rect(x, 0, w, 0), tr("settings.saved_hint"), th.textDim, 12 * s, false) + 12 * s;
-        float contentH = 24 * s + (float)kActionCount * rowH + 8 * s + rowH + 16 * s + 24 * s + (float)kMouseSlots * rowH + notesH + 40 * s;
+        auto noteHeight = [&](const char* key) {
+            return ui.wrappedText(Rect(x, 0, w, 0), tr(key), th.textDim, 12 * s, false);
+        };
+        bool stacked = w < 440 * s;
+        float pairedWidth = stacked ? w : 224 * s;
+        float mouseWidth = stacked ? w : 260 * s;
+        float resetWidth = std::min(68 * s, pairedWidth * 0.32f);
+        float controlGap = std::min(6 * s, pairedWidth * 0.04f);
+        auto labelHeight = [&](const std::string& label, float controlsWidth) {
+            float labelWidth = stacked ? w : w - controlsWidth - 12 * s;
+            return ui.wrappedText(Rect(x, 0, labelWidth, 0), label, th.text, 13.5f * s, false);
+        };
+        auto settingRowHeight = [&](const std::string& label, float controlsWidth) {
+            float height = labelHeight(label, controlsWidth);
+            return stacked ? height + 6 * s + rowH : std::max(rowH, height + 6 * s);
+        };
+        static const char* slotKeys[kMouseSlots] = {"settings.mouse.middle", "settings.mouse.right", "settings.mouse.space_left"};
+        bool addBendBound = binds.chord[(int)Action::AddBend].bound();
+        float appearanceH = 30 * s + settingRowHeight(tr("settings.font_size"), pairedWidth) + 6 * s +
+                            noteHeight("settings.font_size.note") + 12 * s;
+        float keyboardH = 30 * s + 8 * s + rowH + 16 * s;
+        for (int index = 0; index < kActionCount; index++)
+            keyboardH += settingRowHeight(actionLabel((Action)index), pairedWidth);
+        float mouseRowsH = 0;
+        for (int index = 0; index < kMouseSlots; index++)
+            mouseRowsH += settingRowHeight(tr(slotKeys[index]), mouseWidth);
+        float mouseH = 30 * s + mouseRowsH + 6 * s + noteHeight("settings.mouse_note") + 4 * s +
+                       (addBendBound ? noteHeight("settings.add_bend_bound") + 4 * s : 0) +
+                       noteHeight("settings.saved_hint") + 8 * s;
+        float contentH = appearanceH + keyboardH + mouseH;
         float oy = ui.beginScroll("settings-body", body, contentH);
         float y = body.y + oy;
         auto heading = [&](const std::string& t) {
@@ -30,21 +67,48 @@ void App::openSettingsSheet() {
             y += 24 * s;
         };
 
+        auto settingRow = [&](const std::string& label, float controlsWidth) {
+            float height = settingRowHeight(label, controlsWidth);
+            float textHeight = labelHeight(label, controlsWidth);
+            float labelWidth = stacked ? w : w - controlsWidth - 12 * s;
+            float labelY = stacked ? y : y + (height - textHeight) / 2;
+            ui.wrappedText(Rect(x, labelY, labelWidth, 0), label, th.text, 13.5f * s);
+            float controlsY = stacked ? y + textHeight + 6 * s : y + (height - rowH) / 2;
+            Rect controls(x + w - controlsWidth, controlsY + 3 * s, controlsWidth, rowH - 6 * s);
+            y += height;
+            return controls;
+        };
+
+        heading(tr("settings.section.appearance"));
+        Rect fontControls = settingRow(tr("settings.font_size"), pairedWidth);
+        std::string fontSize = std::to_string(uiFontSize);
+        const std::vector<std::string> fontSizes = {"12", "14", "16", "18", "20"};
+        if (ui.comboField("settings-font-size", Rect(fontControls.x, fontControls.y, pairedWidth - resetWidth - controlGap, fontControls.h),
+                          fontSize, fontSizes, false, [](const std::string& value) {
+                              return value == "14" ? tr("settings.font_size.default") : value;
+                          })) {
+            for (const auto& value : fontSizes)
+                if (fontSize == value) setUIFontSize(std::stoi(value));
+        }
+        if (ui.button("settings-font-reset", Rect(fontControls.x + pairedWidth - resetWidth, fontControls.y, resetWidth, fontControls.h),
+                      tr("settings.reset"), BTN_FLAT))
+            setUIFontSize(14);
+        y += 6 * s;
+        y += ui.wrappedText(Rect(x, y, w, 0), tr("settings.font_size.note"), th.textDim, 12 * s) + 12 * s;
+
         // ---- keyboard ----
         heading(tr("settings.section.keys"));
         for (int i = 0; i < kActionCount; i++) {
             Action a = (Action)i;
             bool capturing = captureChord == i;
-            float bt = 150 * s;
-            g.text({x, y + rowH / 2}, actionLabel(a), 13.5f * s, th.text, 0);
-            Rect kb(x + w - bt - 74 * s, y + 3 * s, bt, rowH - 6 * s);
+            Rect keyControls = settingRow(actionLabel(a), pairedWidth);
+            Rect kb(keyControls.x, keyControls.y, pairedWidth - resetWidth - controlGap, keyControls.h);
             if (ui.button("kch" + std::to_string(i), kb, capturing ? tr("settings.press_keys") : chordToText(binds.chord[i]),
                           capturing ? BTN_PRIMARY : BTN_NORMAL))
                 captureChord = capturing ? -1 : i;
-            if (ui.button("krs" + std::to_string(i), Rect(x + w - 68 * s, y + 3 * s, 68 * s, rowH - 6 * s), tr("settings.reset"),
+            if (ui.button("krs" + std::to_string(i), Rect(keyControls.x + pairedWidth - resetWidth, keyControls.y, resetWidth, keyControls.h), tr("settings.reset"),
                           BTN_FLAT))
                 { binds.chord[i] = defaultBindings().chord[i]; saveBindings(); captureChord = -1; }
-            y += rowH;
         }
         y += 8 * s;
         if (ui.button("kset-reset", Rect(x, y, w, rowH), tr("settings.restore_all"), BTN_NORMAL)) {
@@ -56,13 +120,12 @@ void App::openSettingsSheet() {
 
         // ---- mouse ----
         heading(tr("settings.section.mouse"));
-        static const char* slotKeys[kMouseSlots] = {"settings.mouse.middle", "settings.mouse.right", "settings.mouse.space_left"};
         std::vector<std::string> options;
         for (int r = 0; r < kMouseRoleCount; r++) options.push_back(mouseRoleId((MouseRole)r));
         for (int i = 0; i < kMouseSlots; i++) {
-            g.text({x, y + rowH / 2}, tr(slotKeys[i]), 13.5f * s, th.text, 0);
+            Rect mouseControls = settingRow(tr(slotKeys[i]), mouseWidth);
             std::string value = mouseRoleId(binds.mouse[i]);
-            if (ui.comboField("msl" + std::to_string(i), Rect(x + w - 260 * s, y + 3 * s, 260 * s, rowH - 6 * s), value, options, false,
+            if (ui.comboField("msl" + std::to_string(i), mouseControls, value, options, false,
                               [](const std::string& v) {
                                   MouseRole r;
                                   return mouseRoleFromId(v, &r) ? mouseRoleLabel(r) : v;
@@ -73,7 +136,6 @@ void App::openSettingsSheet() {
                     saveBindings();
                 }
             }
-            y += rowH;
         }
         y += 6 * s;
         y += ui.wrappedText(Rect(x, y, w, 0), tr("settings.mouse_note"), th.textDim, 12 * s) + 4 * s;

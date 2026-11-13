@@ -1622,17 +1622,17 @@ void App::drawCanvas(int v, const Camera& c, Rect vp, bool exporting) {
         if (hover.kind == Hit::PIN && !in.touch) {
             const PartInst* p = doc.part(hover.part);
             if (p) {
-                std::string tip = p->label + " · " + p->def->pins[(size_t)hover.pin].name;
+                std::string tip = p->pinAddress(hover.pin);
                 if (simOn) {
                     int net = conn.netOf(p->id, hover.pin);
                     if (net >= 0 && net < (int)sim.netVoltage.size()) tip += "  " + num(sim.netVoltage[(size_t)net], 2) + " V";
                 }
                 float px = 13 * s;
-                float tw = g.textWidth(tip, px) + 16 * s;
+                float tw = g.textWidth(tip, px, FONT_MONO) + 16 * s;
                 Rect r(in.mouse.x + 14 * s, in.mouse.y + 18 * s, tw, 26 * s);
                 if (r.r() > vp.r()) r.x = in.mouse.x - tw - 8 * s;
                 g.fillRoundRect(r, 5 * s, rgba(40, 40, 46, 235));
-                g.text({r.x + 8 * s, r.center().y}, tip, px, rgba(255, 255, 255), 0);
+                g.text({r.x + 8 * s, r.center().y}, tip, px, rgba(255, 255, 255), 0, FONT_MONO);
             }
         }
     }

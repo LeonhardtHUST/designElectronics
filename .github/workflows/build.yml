@@ -133,7 +133,7 @@ jobs:
           Copy-Item build/Release/designElectronics.exe $d
           Copy-Item assets/fonts/* "$d/assets/fonts"
           Copy-Item examples/*.dez "$d/examples"
-          Copy-Item README.md, LICENSE $d
+          Copy-Item README.md, README.en.md, CREDITS.md, LICENSE, THIRD_PARTY_NOTICES.md $d
           Compress-Archive -Path $d -DestinationPath "dist/${{ matrix.asset }}"
 
       - name: Package (Linux)
@@ -145,7 +145,7 @@ jobs:
           cp assets/fonts/* "$d/assets/fonts/"
           cp examples/*.dez "$d/examples/"
           cp assets/icon/icon_256.png "$d/designelectronics.png"
-          cp platform/linux/designelectronics.desktop platform/linux/designelectronics-mime.xml README.md LICENSE "$d/"
+          cp platform/linux/designelectronics.desktop platform/linux/designelectronics-mime.xml README.md README.en.md CREDITS.md LICENSE THIRD_PARTY_NOTICES.md "$d/"
           tar -C dist -czf "dist/${{ matrix.asset }}" designElectronics
 
       - uses: actions/upload-artifact@v4

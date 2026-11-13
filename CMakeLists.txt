@@ -101,6 +101,20 @@ add_custom_command(
   VERBATIM)
 list(APPEND DE_SOURCES ${DE_I18N_BLOB})
 
+set(DE_NOTICE_FILES
+  ${CMAKE_CURRENT_SOURCE_DIR}/LICENSE
+  ${CMAKE_CURRENT_SOURCE_DIR}/THIRD_PARTY_NOTICES.md
+  ${CMAKE_CURRENT_SOURCE_DIR}/CREDITS.md)
+set(DE_LICENSE_BLOB ${CMAKE_CURRENT_BINARY_DIR}/licenses_blob.c)
+add_custom_command(
+  OUTPUT ${DE_LICENSE_BLOB}
+  COMMAND ${CMAKE_COMMAND} "-DOUT=${DE_LICENSE_BLOB}" "-DIN=${DE_NOTICE_FILES}" "-DSYMBOL=de_licenses"
+          -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_parts.cmake
+  DEPENDS ${DE_NOTICE_FILES} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_parts.cmake
+  COMMENT "Embedding open-source license notices"
+  VERBATIM)
+list(APPEND DE_SOURCES src/licenses.cpp ${DE_LICENSE_BLOB})
+
 # ---------------------------------------------------------------------------
 # WebP decoding. The vendored libwebp (1.5.0, BSD, see third_party/libwebp/COPYING)
 # ships as a small static library holding only the decoder. The SSE2/SSE4.1 and NEON
@@ -197,6 +211,9 @@ if(NOT ANDROID AND NOT IOS AND NOT EMSCRIPTEN)
   endif()
 endif()
 target_link_libraries(${DE_TARGET} PRIVATE SDL3_ttf::SDL3_ttf SDL3::SDL3 de_webp)
+if(NOT EMSCRIPTEN AND NOT ANDROID AND NOT IOS AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+  target_link_libraries(${DE_TARGET} PRIVATE ${CMAKE_DL_LIBS})
+endif()
 
 # Windows: SDL is linked as a DLL, so copy the runtime next to the executable.
 if(WIN32 AND NOT DE_VENDOR_SDL)
@@ -224,6 +241,8 @@ set(DE_FONTS
 if(APPLE)
   target_sources(${DE_TARGET} PRIVATE ${DE_FONTS})
   set_source_files_properties(${DE_FONTS} PROPERTIES MACOSX_PACKAGE_LOCATION Resources/assets/fonts)
+  target_sources(${DE_TARGET} PRIVATE ${DE_NOTICE_FILES})
+  set_source_files_properties(${DE_NOTICE_FILES} PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
   # App icon (regenerate with --export-logo + iconutil, see docs/BUILDING.md)
   target_sources(${DE_TARGET} PRIVATE ${CMAKE_SOURCE_DIR}/platform/apple/AppIcon.icns)
   set_source_files_properties(${CMAKE_SOURCE_DIR}/platform/apple/AppIcon.icns PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
@@ -248,6 +267,9 @@ elseif(NOT ANDROID)
     COMMAND ${CMAKE_COMMAND} -E copy ${DE_FONTS} $<TARGET_FILE_DIR:${DE_TARGET}>/assets/fonts/)
   install(TARGETS ${DE_TARGET} RUNTIME DESTINATION bin)
   install(FILES ${DE_FONTS} DESTINATION bin/assets/fonts)
+  add_custom_command(TARGET ${DE_TARGET} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${DE_NOTICE_FILES} $<TARGET_FILE_DIR:${DE_TARGET}>/)
+  install(FILES ${DE_NOTICE_FILES} DESTINATION bin)
   if(UNIX)
     install(FILES platform/linux/designelectronics.desktop DESTINATION share/applications)
     install(FILES platform/linux/designelectronics-mime.xml DESTINATION share/mime/packages)

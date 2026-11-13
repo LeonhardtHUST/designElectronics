@@ -35,7 +35,17 @@ jobs:
         run: |
           emcmake cmake -S . -B build-web -DCMAKE_BUILD_TYPE=Release
           cmake --build build-web --parallel
-          cp build-web/designElectronics.js build-web/designElectronics.wasm build-web/designElectronics.data docs/app/
+          for asset in designElectronics.js designElectronics.wasm designElectronics.data; do
+            test -s "build-web/$asset"
+            cp "build-web/$asset" docs/app/
+          done
+
+      - name: Include attribution and license documents
+        run: |
+          for document in CREDITS.md THIRD_PARTY_NOTICES.md LICENSE; do
+            test -s "$document"
+            cp "$document" docs/
+          done
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

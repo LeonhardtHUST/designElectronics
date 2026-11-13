@@ -125,6 +125,10 @@ void load() {
 
 }  // namespace
 
+int normalizedUIFontSize(long long value) {
+    return value >= 12 && value <= 20 ? static_cast<int>(value) : 14;
+}
+
 std::string settingsPath() { return configPath(); }
 
 void settingsInit() {

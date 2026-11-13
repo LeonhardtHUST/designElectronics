@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>designElectronics：开源的面包板、原理图与 PCB 设计工具</title>
 <meta name="description" content="免费开源的电子设计应用，桌面与手机都能用。在虚拟面包板上搭电路、画原理图、排 PCB、实时仿真并导出 Gerber。离线可用，一个设计就是一个文件。">
-<link rel="canonical" href="https://rorretbolt.github.io/designElectronics/zh/">
-<link rel="alternate" hreflang="en" href="https://rorretbolt.github.io/designElectronics/">
-<link rel="alternate" hreflang="zh-CN" href="https://rorretbolt.github.io/designElectronics/zh/">
+<link rel="canonical" href="https://LeonhardtHUST.github.io/designElectronics/zh/">
+<link rel="alternate" hreflang="en" href="https://LeonhardtHUST.github.io/designElectronics/en/">
+<link rel="alternate" hreflang="zh-CN" href="https://LeonhardtHUST.github.io/designElectronics/zh/">
 <link rel="icon" type="image/svg+xml" href="../assets/logo.svg">
 <style>
 :root {
@@ -68,19 +68,21 @@ footer { border-top:1px solid var(--border); padding:26px 0; color:var(--muted);
   <div class="wrap bar">
     <a class="brand" href="../"><img src="../assets/logo.svg" alt="" width="30" height="30">designElectronics</a>
     <span class="spacer"></span>
-    <a class="btn" href="../">English</a>
-    <a class="btn" href="https://github.com/rORrEtboLt/designElectronics">GitHub</a>
+    <a class="btn" href="../en/">English</a>
+    <a class="btn" href="https://github.com/LeonhardtHUST/designElectronics">GitHub</a>
   </div>
 </header>
 
 <main class="wrap">
+<div class="note">本网站属于 <a href="https://github.com/LeonhardtHUST/designElectronics">LeonhardtHUST/designElectronics 分支</a>，基于 <a href="https://github.com/rORrEtboLt/designElectronics">rORrEtboLt 的原始 designElectronics 项目</a>。保留上游作者与第三方依赖的署名和许可；不是上游官方网站。<a href="../CREDITS.md">项目致谢</a> · <a href="../THIRD_PARTY_NOTICES.md">第三方声明</a> · <a href="../LICENSE">MIT 许可</a>。网页版由本仓库的 GitHub Pages 工作流构建和部署。</div>
   <section class="hero">
     <div>
       <h1>从面包板到 PCB 的一体化设计工具，手机上也能用。</h1>
       <p class="lead">在虚拟面包板上搭出电路，画出原理图，排布 PCB，然后实时仿真看它跑起来。桌面和手机都能用，完全离线，一个设计就是一个可分享的文件。</p>
       <p>
-        <a class="btn primary" href="https://github.com/rORrEtboLt/designElectronics/releases">下载</a>
-        <a class="btn" href="../">完整文档（英文）</a>
+        <a class="btn primary" href="../app/">打开网页编辑器</a>
+        <a class="btn" href="https://github.com/LeonhardtHUST/designElectronics/releases">查看分支发行版</a>
+        <a class="btn" href="../en/">完整文档（英文）</a>
       </p>
     </div>
     <img src="../assets/img/breadboard.webp" alt="在虚拟面包板上搭好的 555 闪烁电路">
@@ -120,13 +122,13 @@ footer { border-top:1px solid var(--border); padding:26px 0; color:var(--muted);
   </ul>
 
   <h2>快速开始</h2>
-  <p>从 <a href="https://github.com/rORrEtboLt/designElectronics/releases">Releases</a> 下载对应平台的压缩包，解压后直接运行。也可以用网页版，无需安装。</p>
+  <p>先查看本分支的 <a href="https://github.com/LeonhardtHUST/designElectronics/releases">Releases</a> 是否已发布对应平台的压缩包；未发布时请自行编译。网页版本需等待 Pages 工作流构建部署成功，可从 <a href="../app/">编辑器</a> 或 <a href="../embed/#example=4">嵌入预览</a> 进入。<a href="https://github.com/LeonhardtHUST/designElectronics/blob/main/docs/PAGES.md">部署操作指南</a>说明首次启用步骤。</p>
   <pre>Windows   designElectronics-Windows-x64.zip   → 解压，运行 designElectronics.exe
 macOS     designElectronics-macOS.zip         → 打开 designElectronics.app
 Linux     designElectronics-Linux-x86_64.tar.gz
-网页版    直接打开 /app/ ，或在自己电脑上构建（见 docs/BUILDING.md）</pre>
+网页版    部署成功后打开本站 app/（项目路径为 /designElectronics/app/）</pre>
   <p>自己编译只需要 CMake 3.20+ 和一个 C++17 编译器，依赖只有 SDL3 与 SDL3_ttf：</p>
-  <pre>git clone https://github.com/rORrEtboLt/designElectronics
+  <pre>git clone https://github.com/LeonhardtHUST/designElectronics
 cd designElectronics
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j</pre>
@@ -145,9 +147,9 @@ cmake --build build -j</pre>
 
 <footer>
   <div class="wrap">
-    <a href="../">English site</a> ·
-    <a href="https://github.com/rORrEtboLt/designElectronics">GitHub</a> ·
-    <a href="https://github.com/rORrEtboLt/designElectronics/blob/main/LICENSE">MIT License</a>
+    <a href="../en/">English site</a> ·
+    <a href="https://github.com/LeonhardtHUST/designElectronics">GitHub</a> ·
+    <a href="https://github.com/LeonhardtHUST/designElectronics/blob/main/LICENSE">MIT License</a>
   </div>
 </footer>
 </body>

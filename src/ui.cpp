@@ -868,7 +868,7 @@ void UI::drawSheet() {
     g->fillRoundRect(Rect(r.x, r.y + 6 * s, r.w, r.h), 12 * s, rgba(0, 0, 0, 50));
     g->fillRoundRect(r, 12 * s, th.panel);
     float pad = 18 * s;
-    g->text({r.x + pad, r.y + pad + 11 * s}, sh.title, 18 * s, th.text, 0);
+    g->text({r.x + pad, r.y + pad + 11 * s}, g->ellipsize(sh.title, 18 * s, std::max(20 * s, r.w - 2 * pad - 44 * s)), 18 * s, th.text, 0);
     inSheet_ = true;
     bool closeNow = false;
     if (!blocking()) {

@@ -23,6 +23,7 @@ std::string settingsWarning();
 // Missing file or key returns `def`.
 std::string settingsGet(const char* key, const std::string& def = "");
 long long settingsGetInt(const char* key, long long def = 0);
+int normalizedUIFontSize(long long value);
 bool settingsBool(const char* key, bool def = false);
 
 // Write-modify-write; creates the folder if needed and keeps config.toml.bak.

@@ -42,6 +42,7 @@ struct PartInst {
         std::string v = prop(def->valueProp);
         return v.empty() ? label : label + "  " + v;
     }
+    std::string pinAddress(int pin) const;
     bool inView(int v) const { return def && def->inView(v); }
     Vec2 pinPos(int pin, int view) const { return place[view].apply(def->pins[pin].pos[view]); }
     Rect worldBounds(int view) const { return place[view].applyRect(def->bounds[view]); }

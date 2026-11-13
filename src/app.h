@@ -208,6 +208,9 @@ public:
 
     // layout
     float userScale = 1.0f;
+    int uiFontSize = 14;
+    void loadUIFontSize();
+    void setUIFontSize(int points);
     std::string startupLanguage;  // --lang: overrides the stored/system choice for this run
     bool compact = false;
     bool drawerParts = false, drawerInspector = false;

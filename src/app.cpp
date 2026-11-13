@@ -2,6 +2,7 @@
 #include "colorcode.h"
 #include "i18n.h"
 #include "logo.h"
+#include "licenses.h"
 #include "partmodels.h"
 #include "settings.h"
 
@@ -21,7 +22,7 @@ static void newProjectContents(Document& d) {
 
 bool App::init(int argc, char** argv) {
     SDL_SetAppMetadata("designElectronics", kAppVersion, "org.designelectronics.app");
-    SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_URL_STRING, "https://github.com/rORrEtboLt/designElectronics");
+    SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_URL_STRING, "https://github.com/LeonhardtHUST/designElectronics");
     SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_TYPE_STRING, "application");
     SDL_SetHint(SDL_HINT_MOUSE_TOUCH_EVENTS, "0");
     SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "1");
@@ -32,6 +33,7 @@ bool App::init(int argc, char** argv) {
     // Preferences first: they hold the interface language, and a damaged or read-only
     // config.toml has to be reported. Migrating an old settings.json happens here too.
     settingsInit();
+    loadUIFontSize();
     // Translations before anything draws: the stored choice wins, otherwise the OS
     // locale picks the language. --lang overrides both for screenshots and tests.
     i18n::init(!startupLanguage.empty() ? startupLanguage : settingsGet("language"));
@@ -153,7 +155,7 @@ void App::layout() {
     float density = SDL_GetWindowPixelDensity(win);
     float display = SDL_GetWindowDisplayScale(win);
     float base = std::max(1.0f, display);
-    ui.s = base * userScale;
+    ui.s = base * userScale * (float)uiFontSize / 14.f;
     float s = ui.s;
     compact = (float)winW / s < 860;
     SDL_Rect safe{0, 0, winW, winH};
@@ -735,13 +737,32 @@ void App::loadExample(size_t i) {
 }
 
 void App::showAbout() {
-    const char* keys[] = {"about.p1", "about.p2", "about.p3", "about.p4", "about.p5", "about.p6"};
-    std::vector<std::string> lines;
-    for (const char* k : keys) {
-        if (!lines.empty()) lines.push_back("");
-        lines.push_back(tr(k));
-    }
-    ui.dialog("designElectronics " + std::string(kAppVersion), lines, {});
+    ui.scrollTo("about-body", 0);
+    ui.openSheet("about", "designElectronics " + std::string(kAppVersion), 700, 680, [this](Rect body) {
+        float scale = ui.s;
+        float fontSize = 14 * scale;
+        float gap = 12 * scale;
+        float buttonHeight = 38 * scale;
+        const char* keys[] = {"about.fork", "about.copyright", "about.p1", "about.p2", "about.p3", "about.p4", "about.p5", "about.p6"};
+        float contentHeight = 3 * (buttonHeight + gap);
+        for (const char* key : keys)
+            contentHeight += ui.wrappedText(Rect(body.x, 0, body.w - 12 * scale, 0), tr(key), ui.th.text, fontSize, false) + gap;
+        float offset = ui.beginScroll("about-body", body, contentHeight);
+        float top = body.y + offset;
+        for (const char* key : keys) {
+            uint32_t color = std::string(key) == "about.fork" ? ui.th.accent : ui.th.text;
+            top += ui.wrappedText(Rect(body.x, top, body.w - 12 * scale, 0), tr(key), color, fontSize) + gap;
+        }
+        bool repository = ui.button("about-repository", Rect(body.x, top, body.w - 12 * scale, buttonHeight), tr("about.repository"));
+        top += buttonHeight + gap;
+        bool upstream = ui.button("about-upstream", Rect(body.x, top, body.w - 12 * scale, buttonHeight), tr("about.upstream"));
+        top += buttonHeight + gap;
+        bool licenses = ui.button("about-licenses", Rect(body.x, top, body.w - 12 * scale, buttonHeight), tr("about.licenses"), BTN_PRIMARY);
+        ui.endScroll();
+        if (repository) SDL_OpenURL("https://github.com/LeonhardtHUST/designElectronics");
+        if (upstream) SDL_OpenURL("https://github.com/rORrEtboLt/designElectronics");
+        if (licenses) openSourceLicenses(ui);
+    });
 }
 
 // The dialog is generated from the binding table, so it always shows what the keys

@@ -1,190 +1,84 @@
-<p align="center"><img src="docs/assets/video/555-blinker.gif" width="720" alt="A 555 timer blinking an LED on a virtual breadboard in the designElectronics simulator"></p>
+<p align="center"><img src="docs/assets/video/555-blinker.gif" width="720" alt="designElectronics 仿真器中的 555 定时器闪烁 LED"></p>
 
 # designElectronics
 
-**A free breadboard, schematic and PCB designer that runs on your phone.** It also runs in any browser and on your laptop.
+**免费、离线的面包板 / 原理图 / PCB 设计与仿真工具。** 支持桌面端、手机和平板浏览器。
 
-- **Breadboard → schematic → PCB.** All three views stay linked, and you can export Gerber files ready for any PCB fab.
-- **Live simulation.** 555s blink, LEDs glow and meters read volts. Arduino and ESP32 sketches run line by line.
-- **Free, offline, no account.** A design is one `.dez` file you can share anywhere. MIT licensed.
+> 本仓库是 [LeonhardtHUST/designElectronics](https://github.com/LeonhardtHUST/designElectronics)，fork 自[上游/原始项目](https://github.com/rORrEtboLt/designElectronics)。上游作者为 Nesara Hippla；代码遵循 MIT 许可，详见 [CREDITS.md](CREDITS.md) 与 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
-**[▶ Try it in your browser](https://rorretbolt.github.io/designElectronics/app/)** (works on phones) · [Documentation & screenshots](https://rorretbolt.github.io/designElectronics/)
+- **面包板 → 原理图 → PCB**：三视图联动，可导出 Gerber。
+- **实时仿真**：555、LED、逻辑器件、仪表以及 Arduino / ESP32 草图。
+- **免费、离线、无需账号**：项目保存为可分享的 `.dez` 文件。
 
-[中文说明](README.zh-CN.md) · [中文官网](https://rorretbolt.github.io/designElectronics/zh/)
+**[▶ 浏览器试用](https://LeonhardtHUST.github.io/designElectronics/app/)**（Pages 首次成功部署后可用） · [项目文档与截图](https://LeonhardtHUST.github.io/designElectronics/) · [中文介绍](https://LeonhardtHUST.github.io/designElectronics/zh/)
 
-## Download
+英文说明：[README.en.md](README.en.md)
 
-| macOS 11+ (Apple Silicon & Intel) | Windows 10/11 (64-bit) | Linux x86_64 |
-| --- | --- | --- |
-| [designElectronics-macOS.zip](https://github.com/rORrEtboLt/designElectronics/releases/latest/download/designElectronics-macOS.zip) | [designElectronics-Windows-x64.zip](https://github.com/rORrEtboLt/designElectronics/releases/latest/download/designElectronics-Windows-x64.zip) | [designElectronics-Linux-x86_64.tar.gz](https://github.com/rORrEtboLt/designElectronics/releases/latest/download/designElectronics-Linux-x86_64.tar.gz) |
+## 下载
 
-The builds aren't code-signed yet: on macOS right-click the app ▸ **Open** the first time; on Windows choose **More info ▸ Run anyway**. See the [release notes](https://github.com/rORrEtboLt/designElectronics/releases) for details.
+桌面构建可从本仓库下载： [macOS](https://github.com/LeonhardtHUST/designElectronics/releases/latest/download/designElectronics-macOS.zip) · [Windows x64](https://github.com/LeonhardtHUST/designElectronics/releases/latest/download/designElectronics-Windows-x64.zip) · [Linux x86_64](https://github.com/LeonhardtHUST/designElectronics/releases/latest/download/designElectronics-Linux-x86_64.tar.gz)。完整版本与校验信息见 [Releases](https://github.com/LeonhardtHUST/designElectronics/releases)。未签名构建在 macOS 首次打开需右键选择“打开”，Windows 需选择“更多信息 → 仍要运行”。网页版与移动端构建状态见 [docs/PAGES.md](docs/PAGES.md)（Pages 部署指南）。
 
-Or open the [web app](https://rorretbolt.github.io/designElectronics/app/) on any device, including phones. Native iOS and Android builds aren't in the app stores yet. You can build them yourself ([docs/BUILDING.md](docs/BUILDING.md)).
+## 构建与运行（桌面）
 
-## Build & run (desktop)
-
-You need CMake ≥ 3.20, a C++17 compiler, and SDL3 + SDL3_ttf.
+需要 CMake ≥ 3.20、C++17 编译器、SDL3 与 SDL3_ttf。详见 [docs/BUILDING.md](docs/BUILDING.md)。
 
 ```sh
 # macOS
 brew install cmake sdl3 sdl3_ttf
-# Debian/Ubuntu (24.10+) — or build SDL from source, see docs/BUILDING.md
-sudo apt install cmake libsdl3-dev libsdl3-ttf-dev
+# Debian/Ubuntu
+sudo apt install build-essential cmake libsdl3-dev libsdl3-ttf-dev
 
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
+cmake --build build --config Release --parallel
 
 # macOS
 open build/designElectronics.app
-# Linux / Windows
+# Linux
 ./build/designElectronics
+# Windows (PowerShell)
+.\build\Release\designElectronics.exe
 ```
 
-Open an example: `File ▸ Examples`, or `designElectronics examples/LED_with_battery.dez`.
+打开示例：`File ▸ Examples`，或运行 `designElectronics examples/LED_with_battery.dez`。iOS / Android 构建路径见 [docs/BUILDING.md](docs/BUILDING.md)。
 
-To build for **iOS and Android**, see [docs/BUILDING.md](docs/BUILDING.md).
-
-### Use it from an AI assistant
+### AI 助手（MCP）
 
 ```sh
-# Claude Code
 claude mcp add designElectronics -- "$PWD/build/designElectronics.app/Contents/MacOS/designElectronics" --mcp
 ```
 
-Then ask: *"Design an ESP32 circuit that blinks an LED on GPIO2, simulate it and save it to ~/blink.dez."*
-Setup for Claude Desktop, Cursor and other clients is in [docs/MCP.md](docs/MCP.md).
+Claude Code、Codex、Gemini CLI、Cursor 等客户端可通过 MCP 搜索元件、布线、仿真、自动布线、DRC 和导出。详见 [docs/MCP.md](docs/MCP.md)。
 
-### Self-test
+### 自测
 
 ```sh
-./build/designElectronics.app/Contents/MacOS/designElectronics --selftest   # macOS
-./build/designElectronics --selftest                                        # elsewhere
+./build/designElectronics --selftest
 ```
 
-This runs headless checks over the whole model: every part definition, file
-round-trips, connectivity, simulation (LEDs light, the multimeter reads 4.5 V),
-autorouting, DRC and every exporter.
+## 使用与功能
 
-## Using it
+1. 在面包板视图拖放元件并连接引脚；点击“仿真”运行电路。
+2. 在原理图视图整理符号，把飞线转换为导线。
+3. 在 PCB 视图设置板框、摆放封装、自动布线并运行 DRC。
+4. 通过“文件 ▸ 导出”输出 Gerber、BOM、网表、SPICE、SVG、PNG 或视频/GIF。
 
-1. **Breadboard view** — drag parts from the bin (on a phone, tap **Parts** and
-   then a part). Push their legs into the breadboard. Drag from a hole to
-   another hole or pin to add jumper wires. Press **Simulate** to try it out.
-2. **Schematic view** — your breadboard connections appear as dashed lines.
-   Arrange the symbols, then click each dashed line (or drag pin to pin) to draw
-   the wires. Add ground and power symbols; symbols with the same name connect.
-3. **PCB view** — size the board in the Inspector, arrange the footprints,
-   press **Autoroute**, then **DRC**. Export Gerbers from **Export ▸ Gerber**.
-4. **Share** — **Save / Share** writes a `.dez` file. Anyone with
-   designElectronics can open it on any platform.
+支持多种常用元件、开发板、传感器、显示器件和自定义 `.dezpart` 模型；提供撤销/重做、复制粘贴、版本历史、可选 GitHub 同步、Arduino 草图解释器、网页嵌入和 AI 标签页。项目为 C++17 + SDL3 构建，详细功能列表见 [README.en.md](README.en.md)。
 
-Keyboard shortcuts are listed under **Help ▸ Keyboard & Touch Shortcuts**. Every one of them,
-and what each mouse button does, can be changed in **View ▸ Settings** — the choice is stored in
-`config.toml` in the preferences folder, so it survives a restart.
+### 字号、引脚与快捷键
 
-## All features
+在 **视图 ▸ 设置 ▸ 外观 ▸ 界面字号** 选择 12、14（默认）、16、18 或 20，立即生效并保存为 `config.toml` 的 `appearance.font_size`；控件随文字调整，不改变电路尺寸。色环计算器保持字号，内容放不下时滚动。元件型号、阻值、容值等丝印使用等宽字体并随元件值同步更新。快捷键和鼠标按键可在设置中修改，面板会显示可用引脚与连接状态。
 
-An open-source electronics design app for **desktop and mobile**. Build a circuit on a virtual breadboard, draw
-the schematic, lay out a PCB and export fab-ready Gerber files — on your laptop
-or your phone.
+## 仿真边界
 
-Projects are single **`.dez` files** (plain JSON) that embed every part they
-use, so they open in any copy of designElectronics, **offline, with no server,
-account or extra download**. Share them by email, chat, AirDrop or USB stick.
+可选 ngspice 精度分析支持 `.tran`、`.ac`、`.dc` 等模式；内置实时仿真仍是默认路径。请阅读 [docs/NGSPICE.md](docs/NGSPICE.md) 了解安装、兼容性与已知边界；本项目不宣称数值或精度问题已全部修复。
 
-Built in C++17 with **SDL3** and SDL3_ttf. No other dependencies.
+## 参与贡献
 
-| Area | What you get |
-| --- | --- |
-| **Three linked views** | Breadboard, Schematic and PCB. Each part has a position in every view; a connection made in any view shows up in the others as a dashed *ratsnest* line until you wire it there too. |
-| **Breadboard** | Half+, full+ and mini breadboards with real bus strips and power rails, plus the **HUST EIC Lesson** carrier: four SYB-120 style 700-point tiles on one plate, each with a 60×10 field split by the central channel and a 3-4-3 segmented power row along both long edges. Part legs snap into holes; holes in use light up green. Moving a breadboard carries the parts plugged into it. |
-| **Wiring** | Drag from any pin or hole to draw a wire. Drag a wire to bend it; double-click a bend point to remove it. Wire ends show green (connected) or red (loose). Wire colours on the breadboard; junction dots in the schematic. Click a ratsnest line to turn it into a wire or trace. New wires are laid out as **tidy right-angle runs** around the parts, and re-route when you move a part; **Routing ▸ Tidy Wires** (T) tidies a whole design. |
-| **PCB** | Board outline with size in mm, single or double-sided, two copper layers, vias and mounting holes. A grid A* **autorouter** with right-angle traces, clearances and vias. **DRC** checks clearance, parts off the board and overlapping footprints. |
-| **Simulator** | Real-time transient simulation (1 ms steps). Capacitors charge, 555 timers blink LEDs, logic gates, flip-flops, counters (4017, 74HC393) and shift registers (74HC595) clock, op-amps amplify, comparators switch, regulators regulate, relays click, 7-segment displays light up. Multimeters read volts/amps, pushbuttons respond to presses. Overloaded parts *smoke*, with an explanation. Dev boards (Raspberry Pi, ESP32, Pico, Arduino…) supply their power rails and run the Arduino sketch you give them (see *Program boards*) or drive pins you configure (`GPIO2=BLINK:500`, `D9=PWM:30`). Raspberry Pi Linux/Python programs aren't simulated yet. |
-| **Parts library** | 178 entries, searchable, in 17 categories. **Boards:** Raspberry Pi 5, 4 Model B, 3 Model B/B+ and Zero/Zero 2 W (real 40-pin GPIO header), Raspberry Pi Pico/Pico W/Pico 2; Arduino Uno, Uno R4 Minima/WiFi, Leonardo, Mega 2560, Due, Nano, Nano Every, Nano 33 IoT, Nano 33 BLE, Nano ESP32, Nano RP2040 Connect, Micro, Pro Mini, Pro Micro, MKR WiFi 1010; ESP32 DevKitC/DevKit V1/S3/C3 SuperMini, ESP32-CAM, ESP8266 NodeMCU, Wemos D1 Mini; STM32 Blue Pill/Black Pill, Teensy 4.0, Seeed XIAO, Adafruit Feather. **Chips:** ATmega328P, ATtiny85/84, PIC; 74HC00/02/03/04/08/10/11/14/20/32/86/125/74/138/165/245/393/595/4051, CD4001/4011/4013/4017/40192/4066/4069/4070/4071/4081/4093/4511; LM358/324/741, TL072, NE5532, HG5532, MCP6002, LM393/339, NE555/556, LM386, TL431, PC817, 4N35, MAX232; ULN2003/2803, L293D, TIP120, IRF540N; LM317, AMS1117, 78L05, 7805; EEPROM, RTC, ADC, I/O expanders, MAX7219, CH340G. **Modules:** L298N, A4988, DRV8825, relay, LM2596, MT3608, TP4056. **Sensors:** LM35, TMP36, DS18B20, DHT11/22, MAX6675 thermocouple, HC-SR04, PIR, MPU-6050, BMP/BME280, VL53L0X, soil moisture, MQ-2, joystick, Hall, IR, sound, HC-05, RC522, NEO-6M, nRF24L01, ADS1115, DS3231. **Displays:** 7-segment (CC/CA), RGB LED, SSD1306 OLED (shows what a sketch draws), LCD 16×2, TM1637, MAX7219 matrix, WS2812B, ST7735. Plus the basics: resistors, LEDs, capacitors, diodes, transistors, switches, batteries, breadboards, headers, and a generic DIP IC with any pin count. |
-| **Custom parts** | Make your own components: import a `.dezpart` model (name, datasheet, pins, silkscreen, schematic symbol, drawing, simulation model) or a short datasheet block, and it joins the parts bin under **Custom** for every project. AI assistants can do the same over MCP (`import_part_model`, `export_part_model`, `list_part_models`). See [docs/PART_MODELS.md](docs/PART_MODELS.md). |
-| **Export** | Gerber RS-274X + Excellon drill (zipped, ready to upload to a fab), SVG and PNG of any view, Bill of Materials (CSV), XML netlist, SPICE netlist. |
-| **Editing** | Undo/redo, copy/cut/paste (clipboard is JSON, so you can paste between windows or apps), duplicate, rotate, flip, z-order, rubber-band selection, notes, snap-to-grid, keyboard nudging. |
-| **Mobile-friendly** | Adaptive layout: on narrow screens the parts bin and inspector become slide-over drawers and the toolbar grows larger. One finger pans, two fingers pinch-zoom, long-press opens context menus. Respects safe areas. Autosaves continuously, so nothing is lost if the OS kills the app. |
-| **Stack** | A Photoshop-style stack of components (tab next to Parts; a drawer on phones): move a component up or down, group selected parts so they share one level, ungroup them again, click to select, double-click to zoom, hide parts per view, lock them. Groups never nest. Badges flag unrouted connections, parts without a simulation model, damaged parts and live LED brightness. |
-| **Version history** | Every save keeps a version on your device, with a summary of what changed ("R1 resistance 220Ω → 330Ω · Added LED2"). **File ▸ Version History** lets you restore any version or open it as a copy — offline, on every platform. |
-| **GitHub sync (optional)** | Connect GitHub and **File ▸ Commit to GitHub** commits the design to a private repository you own (each design in its own folder, or its own repo), optionally on every save. Older commits show up in Version History and can be restored from any device. Desktop builds; uses the system's libcurl. |
-| **Program boards** | Each microcontroller board can hold an **Arduino sketch** that runs in the simulator (built-in interpreter: pins, `analogRead`, `delay`/`millis`, `Serial`, `shiftOut`, ESP32 `ledc`…) with the executing line highlighted and a Serial Monitor, and uploads to the real board via arduino-cli / Arduino IDE 2. |
-| **Videos & GIFs** | **File ▸ Export ▸ Video or GIF** records the running circuit for Instagram Reels / YouTube Shorts / TikTok (9:16), Instagram posts (4:5), square (1:1) and YouTube (16:9): MP4 (H.264, bundled public-domain encoder) or animated GIF, optionally touring breadboard → schematic → PCB. |
-| **Embed & web** | **File ▸ Embed in a Website** gives you an `<iframe>` for blogs: readers switch views, pan, zoom and run the simulation. The design is packed into the link, so nothing is uploaded. The same app runs in the browser at [rorretbolt.github.io/designElectronics/app](https://rorretbolt.github.io/designElectronics/app/) (WebAssembly). |
-| **AI tab** | Describe a circuit in plain language and the AI tool you already have — **Claude Code** (or Codex / Gemini CLI, or any custom command) — builds it live in the open design: parts, breadboard placement, wiring, sketches and a simulation check. Every change is undoable; the agent may only use designElectronics' tools and connects over 127.0.0.1 with a one-time token. |
-| **AI assistants (MCP)** | Run `designElectronics --mcp` and Claude, Cursor or any MCP client can design for you: search parts, add and wire them, plug them into breadboards, simulate, autoroute, run DRC and export Gerbers. Works offline over stdio. See [docs/MCP.md](docs/MCP.md). |
-| **Desktop niceties** | Menus, shortcuts, tooltips, trackpad pinch/scroll, drag-and-drop of `.dez` files onto the window, file associations (macOS, Linux). |
+欢迎提交本仓库的 [Issues](https://github.com/LeonhardtHUST/designElectronics/issues) 与 [Pull Requests](https://github.com/LeonhardtHUST/designElectronics/pulls)，见 [CONTRIBUTING.md](CONTRIBUTING.md) 与 [CLA.md](CLA.md)。
 
-## What's new in 0.8
+## 许可与致谢
 
-- Optional desktop ngspice precision analysis with `.tran`, `.ac` and `.dc` CLI modes; the built-in real-time simulator remains the default.
-- Expanded SPICE netlist export, runtime library loading, CSV output and cross-check tooling.
-- Colour-code and component-marking tools for resistors and capacitors.
+代码采用 MIT，原作者 Nesara Hippla，见 [LICENSE](LICENSE)、[CREDITS.md](CREDITS.md) 和 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。字体及第三方组件的许可证随仓库分发；字体文件位于 `assets/fonts/`。
 
-See [docs/NGSPICE.md](docs/NGSPICE.md) for ngspice setup and limitations.
-
-## Project layout
-
-```
-src/
-  main.cpp       SDL3 main callbacks, CLI (--selftest, --screenshot, …)
-  app.*          application state, file I/O, undo, editing commands
-  canvas.cpp     view rendering and pointer/touch interaction
-  panels.cpp     top bar, menus, parts bin, inspector, toolbar
-  ui.*           small immediate-mode UI toolkit
-  gfx.*          anti-aliased 2D drawing + cached text on SDL_Renderer
-  partlib.*      part definitions and the built-in library
-  doc.*          document model, .dez format, connectivity / ratsnest
-  router.cpp     PCB autorouter        drc.cpp     design rules check
-  tidy.cpp       tidy right-angle wiring
-  sim.cpp        simulator             export.cpp  Gerber/SVG/BOM/netlist/SPICE
-  examples.cpp   built-in example projects
-  mcp.cpp        MCP server for AI assistants (--mcp)
-  logo.cpp       the logo, a flat blue LED on a navy disc (top bar, window icon, --export-logo)
-  history.cpp    local version history + GitHub REST client
-  app_history.cpp Version History / Commit / GitHub Account screens
-  json.*         tiny JSON parser/writer
-assets/fonts/    Sarasa Gothic SC + JetBrains Maple Mono (SIL OFL)
-assets/icon/     logo (SVG) and app icon PNGs
-platform/        Info.plist (macOS/iOS), Linux .desktop + MIME, Android notes
-examples/        example .dez projects
-docs/            file format spec, build guide, MCP guide
-tests/           MCP smoke test, GitHub sync test (local mock API)
-```
-
-## Contributing
-
-Parts are the easiest way to contribute: add a generator in `src/partlib.cpp`
-(three small vector drawings + pin positions) and register it in
-`generators()` and `partLibrary()`. Run `--selftest` before sending a PR.
-See [CONTRIBUTING.md](CONTRIBUTING.md); contributors sign a short
-[CLA](CLA.md) on their first pull request.
-
-## License
-
-Code: MIT, © 2026 Nesara Hippla (see [LICENSE](LICENSE)). Video encoding uses
-[minih264](https://github.com/lieff/minih264) and [minimp4](https://github.com/lieff/minimp4)
-(public domain, CC0; see [third_party](third_party)).
-
-### Fonts
-
-Both bundled fonts are under the SIL Open Font License 1.1 and ship next to the
-binary in `assets/fonts/` (their licence texts are there too):
-
-| Font | Used for | Author / source | Licence |
-|---|---|---|---|
-| **Sarasa Gothic SC** 1.0.43 (subset) | UI and canvas text — Latin plus ~6 700 everyday hanzi, so Chinese notes and labels render without falling back | © 2015-2025 Renzhi Li (Belleve Invis), [be5invis/Sarasa-Gothic](https://github.com/be5invis/Sarasa-Gothic) | [OFL-SarasaGothic.txt](assets/fonts/OFL-SarasaGothic.txt) |
-| **JetBrains Maple Mono** 1.2304.79 (subset) | code editor, terminal, serial monitor | © 2025 Space Time, [SpaceTimee/Fusion-JetBrainsMapleMono](https://github.com/SpaceTimee/Fusion-JetBrainsMapleMono); built on [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) © 2020 The JetBrains Mono Project Authors and [Maple Mono](https://github.com/subframe7536/maple-font) © 2022 The Maple Mono Project Authors | [OFL-JetBrainsMapleMono.txt](assets/fonts/OFL-JetBrainsMapleMono.txt) |
-
-The masters carry ~21 000 hanzi each and add 40 MB to every download; the
-binary only draws a few thousand. `tools/subset_fonts.py` rebuilds the shipped
-files with the characters the app can display (Latin, Greek, punctuation,
-arrows, box drawing, kana, and every character in `i18n/*.json` and the C++
-sources). Glyph outlines and hinting are untouched, so the text looks the same —
-a character outside the subset is drawn by the system font (Microsoft YaHei,
-PingFang, Noto CJK), which is why traditional Chinese or a rare name still
-renders on the desktop. The web build has no system fonts to fall back on; build
-it with `--set gbk` if your users need the wider repertoire.
-
+- Sarasa Gothic SC：Renzhi Li（Belleve Invis），SIL OFL 1.1。
+- JetBrains Maple Mono：Space Time，基于 JetBrains Mono 与 Maple Mono，SIL OFL 1.1。
