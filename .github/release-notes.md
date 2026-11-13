@@ -1,6 +1,23 @@
-Free, open-source electronics design for desktop and phone: breadboard, schematic and PCB views, live simulation, Gerber export, version history and an MCP server for AI assistants.
+免费开源的面包板、原理图与 PCB 设计工具，支持实时仿真、Gerber 导出、版本历史和 MCP。
 
-📖 **Documentation:** https://leonhardthust.github.io/designElectronics/ · 🌐 **Try it in your browser:** https://leonhardthust.github.io/designElectronics/app/
+本仓库为 [LeonhardtHUST/designElectronics](https://github.com/LeonhardtHUST/designElectronics)，fork 自 [rORrEtboLt/designElectronics](https://github.com/rORrEtboLt/designElectronics)，保留原作者 Nesara Hippla 的 MIT 版权及第三方声明。
+
+📖 **中文站点：** https://leonhardthust.github.io/designElectronics/ · 🌐 **网页编辑器：** https://leonhardthust.github.io/designElectronics/app/
+
+## 0.8.2 更新
+
+- **可调界面字号。** 在“视图 → 设置 → 外观”选择 12、14（默认）、16、18、20 档，即时生效并自动保存；窄窗口采用上下排列，保留可访问的重置按钮。
+- **计算器可读性。** 调大色环电阻计算器的说明、标签和结果文字，取消为适应弹窗而自动缩字，仅在内容实际溢出时滚动。
+- **统一引脚地址。** 等宽字体显示引脚编号，有子板使用 `BB1.T1.j1`，无子板使用 `BB1.j1`；保留内部 ID、连线规则与存档兼容性。
+- **精简元件说明。** 整理 352 条中文元件说明的标点与短句衔接，保留参数、引脚、操作示例、安全提示和仿真限制。
+- **关于与开源许可。** 明确本 fork 与上游来源，新增离线许可证及致谢阅读页；分发包携带 `CREDITS.md`、`LICENSE` 和 `THIRD_PARTY_NOTICES.md`。
+- **中文优先文档与 Pages。** 主 README 和站点首页改为中文，英文说明保留；修正项目链接，并修复网页构建中对桌面 ngspice 入口的引用。
+
+### 已知限制
+
+可选 ngspice 后端仍存在已记录的向量数值映射异常和未完成的数值对拍，本版未修复，不能将其输出作为精确电路分析依据。内置实时仿真器保持原有路径；ngspice 共享库不随本次下载包分发。
+
+下方保留历史版本说明。
 
 ## What's new in 0.8.1
 
