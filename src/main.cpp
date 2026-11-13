@@ -24,14 +24,23 @@
 #include <string>
 
 #include "app.h"
+#include "colorcode.h"
 #include "history.h"
 #include "i18n.h"
 #include "logo.h"
 #include "mcp.h"
+#include "ngspice_backend.h"
 #include "partmodels.h"
 #include "settings.h"
 #include "toml.h"
+
+#if DE_NGSPICE_DESKTOP
+int spiceCrossCheck(const std::string& outMarkdownPath);
+#endif
 #include "video.h"
+
+void spiceExportTests(int& failures);
+void ngspiceBackendTests(int& failures);
 
 namespace {
 
@@ -1247,6 +1256,135 @@ void imageAnnoTests(int& failures) {
     }
 }
 
+// ---- colour code calculator, component markings, monospaced ink ----
+void colorCodeTests(int& failures) {
+    printf("Colour code and markings\n");
+    i18n::initEmbedded();
+    i18n::setLang("en");
+    using namespace cc;
+    auto bandsOf = [](double ohms, int n, double tol = 5, int ppm = 100) {
+ cc::Spec s; s.ohms = ohms; s.bands = n; s.tolerance = tol; s.ppm = ppm;
+        return cc::encode(s);
+    };
+    auto same = [](const cc::Bands& b, std::initializer_list<int> want) {
+ size_t i = 0;
+        for (int c : want) if (i >= (size_t)b.n || b.color[i++] != c) return false;
+        return (size_t)b.n == want.size();
+    };
+    check(same(bandsOf(4700, 4), {YELLOW, VIOLET, RED, GOLD}), "4.7k 4-band is yellow violet red gold", failures);
+    check(same(bandsOf(1000, 3), {BROWN, BLACK, RED}), "1k 3-band has no tolerance band", failures);
+    check(same(bandsOf(4700, 5, 1), {YELLOW, VIOLET, BLACK, BROWN, BROWN}), "4.7k 1% 5-band is yellow violet black brown brown", failures);
+    check(same(bandsOf(0.47, 4), {YELLOW, VIOLET, SILVER, GOLD}), "0.47 ohm uses the silver multiplier", failures);
+    check(same(bandsOf(4.7, 4), {YELLOW, VIOLET, GOLD, GOLD}), "4.7 ohm uses the gold multiplier", failures);
+    check(same(bandsOf(10e3, 6, 0.1, 5), {BROWN, BLACK, BLACK, RED, VIOLET, VIOLET}), "10k 0.1% 5ppm 6-band", failures);
+    {
+        bool exact = true;
+        cc::Spec s; s.ohms = 4750; s.bands = 4;
+        Bands b = encode(s, &exact);
+        check(!exact && b.n == 4, "4.75k does not fit 4 bands and is flagged", failures);
+        s.bands = 5; encode(s, &exact);
+        check(exact, "4.75k fits 5 bands", failures);
+    }
+    bool roundTrip = true;
+    for (int n = 3; n <= 6; n++)
+        for (double v : {0.1, 1.0, 4.7, 10.0, 220.0, 330.0, 1500.0, 4700.0, 47000.0, 1e6, 2.2e6, 1e8}) {
+     cc::Spec s; s.bands = n; s.ohms = v; s.tolerance = n == 3 ? 20 : 2; s.ppm = 50;
+     cc::Spec back;
+     bool ok = decode(encode(s), back) && back.bands == n && std::fabs(back.ohms - v) < v * 1e-9 && back.tolerance == s.tolerance;
+     if (n == 6) ok = ok && back.ppm == 50;
+     if (!ok) { roundTrip = false; printf("    round trip failed: %d bands %g\n", n, v); }
+        }
+    check(roundTrip, "value -> bands -> value for 3, 4, 5 and 6 bands", failures);
+    {
+        Bands b; b.n = 4;
+        b.color[0] = BROWN; b.color[1] = BLACK; b.color[2] = ORANGE; b.color[3] = GOLD;
+ cc::Spec s;
+ check(decode(b, s) && s.ohms == 10000 && s.tolerance == 5, "brown black orange gold reads 10k +-5%", failures);
+        b.color[3] = ORANGE;
+ check(!decode(b, s), "orange is not a tolerance colour", failures);
+    }
+    check(parseResistance("4k7") == 4700 && parseResistance("4R7") == 4.7 && parseResistance("R47") == 0.47 &&
+   parseResistance("2M2") == 2.2e6 && parseResistance("4.7kΩ") == 4700 && parseResistance("100") == 100 && parseResistance("abc") < 0,
+   "resistance text: 4k7, 4R7, R47, 2M2, 4.7kΩ, 100", failures);
+    check(formatOhms(4700) == "4.7kΩ" && formatOhms(100) == "100Ω" && formatOhms(2.2e6) == "2.2MΩ" && formatOhms(0.47) == "0.47Ω", "resistance formatting", failures);
+    check(resistorMarking(10000, 5) == "103" && resistorMarking(10000, 1) == "1002" && resistorMarking(4.7, 5) == "4R7" &&
+          resistorMarking(220, 5) == "221" && resistorMarking(0.47, 5) == "R47", "SMD resistor markings (103, 1002, 4R7, 221)", failures);
+    check(capacitorMarking(100e-9) == "104" && capacitorMarking(10e-9) == "103" && capacitorMarking(22e-12) == "22" &&
+          capacitorMarking(4.7e-12) == "4p7" && capacitorMarking(1e-6) == "105", "capacitor markings (104, 103, 22, 4p7, 105)", failures);
+
+    // the resistor part follows its properties, and the Inspector writes them back
+    for (int n = 3; n <= 6; n++) {
+        PartDefPtr d = getPartDef("resistor", {{"resistance", "4.7kΩ"}, {"bands", std::to_string(n)}});
+ int bandRects = 0;
+ for (auto& pr : d->gfx[BB]) if (pr.kind == Prim::RECT && pr.fill != 0 && pr.b.x - pr.a.x < 40 && pr.b.y - pr.a.y > 70) bandRects++;
+ // 3 bands: two digits and a multiplier; the others add a tolerance band (and a tempco band)
+        check(d && bandRects == n, (std::to_string(n) + "-band resistor draws that many bands").c_str(), failures);
+    }
+    check(getPartDef("resistor", {{"bands", "6"}})->propDefs.size() > getPartDef("resistor", {{"bands", "3"}})->propDefs.size(),
+   "a 6-band resistor offers tolerance and temperature coefficient", failures);
+    {
+        App app;
+        int id = app.doc.addPart("resistor", {{"resistance", "1kΩ"}}, {0, 0}).id;
+ cc::Spec want; want.ohms = 4700; want.bands = 5; want.tolerance = 1;
+        app.setPartProps(id, cc::propsFromSpec(want));
+        const PartInst* p = app.doc.part(id);
+ cc::Spec got = cc::specFromProps(mergedProps(p->type, p->props));
+        check(got.ohms == 4700 && got.bands == 5 && got.tolerance == 1 && app.undoStack.size() == 1, "the calculator writes value, bands and tolerance in one undo step", failures);
+ app.setPartProp(id, "resistance", "4k7");
+        check(app.doc.part(id)->prop("resistance") == "4.7kΩ", "a typed 4k7 is stored as 4.7kΩ", failures);
+    }
+
+    // markings follow the value
+    {
+        Document d;
+        auto inkOf = [&](int id) {
+     std::string all;
+     for (int v = 0; v < NUM_VIEWS; v++)
+  if (v != SCH) for (auto& pr : d.part(id)->def->gfx[v]) if (pr.kind == Prim::TEXT) all += pr.text + "|";
+     return all;
+ };
+        int c = d.addPart("capacitor_ceramic", {{"capacitance", "100nF"}}, {0, 0}).id;
+ check(inkOf(c).find("104") != std::string::npos, "a 100nF ceramic is printed 104", failures);
+        d.part(c)->props["capacitance"] = "10nF";
+        d.part(c)->refresh();
+        check(inkOf(c).find("103") != std::string::npos && inkOf(c).find("104") == std::string::npos, "changing the value reprints the capacitor (103)", failures);
+ int e = d.addPart("capacitor_electrolytic", {{"capacitance", "470µF"}}, {0, 0}).id;
+        check(inkOf(e).find("470µF") != std::string::npos, "an electrolytic shows its value", failures);
+ int r = d.addPart("resistor", {{"resistance", "10kΩ"}, {"package", "0603 [SMD]"}}, {0, 0}).id;
+        check(inkOf(r).find("103") != std::string::npos, "an SMD 10k resistor is printed 103", failures);
+ int dp = d.addPart("diode", {{"part", "1N4148"}}, {0, 0}).id;
+ check(inkOf(dp).find("1N4148") != std::string::npos, "a diode body shows its part number", failures);
+        int t = d.addPart("timer555", {{"part", "LM555"}}, {0, 0}).id;
+        check(inkOf(t).find("LM555") != std::string::npos, "a 555 shows the chosen part number", failures);
+        d.part(r)->props["resistance"] = "10kΩ";
+        check(d.part(r)->silkLabel() == d.part(r)->label + "  10kΩ", "the PCB silkscreen label carries the value", failures);
+        d.part(r)->props["resistance"] = "22kΩ";
+ check(d.part(r)->silkLabel() == d.part(r)->label + "  22kΩ", "and follows it when the value changes", failures);
+    }
+    {
+ App app;
+        check(!App::toolList().empty() && app.toolsMenu().size() == App::toolList().size(), "the tools menu lists every tool", failures);
+        check(i18n::exists("tool.colorcode.name") && i18n::exists("menu.title.tools") && i18n::exists("welcome.tools"), "tool strings are translated", failures);
+ i18n::setLang("zh-CN");
+ check(tr("tool.colorcode.name") != "tool.colorcode.name" && tr("cc.color.red") == "红", "tool strings exist in Chinese", failures);
+        i18n::setLang("en");
+    }
+}
+static double spiceSI(std::string s) {
+    while(!s.empty() && std::isspace((unsigned char)s.back())) s.pop_back();
+    double mul=1.0; if(!s.empty()) { char c=s.back(); if(c=='p') mul=1e-12; else if(c=='n') mul=1e-9; else if(c=='u' || c=='µ') mul=1e-6; else if(c=='m') mul=1e-3; else if(c=='k' || c=='K') mul=1e3; else if(c=='M') mul=1e6; else if(c=='G') mul=1e9; if(mul!=1.0) s.pop_back(); }
+    return std::atof(s.c_str())*mul;
+}
+static int spiceCli(int argc, char** argv, int at) {
+    if(at+1>=argc) { std::fprintf(stderr,"--spice-run requires a .dez file\\n"); return 2; }
+    Document d; std::string err; if(!d.deserialize(readTextFile(argv[at+1]),&err)){ std::fprintf(stderr,"cannot read %s: %s\\n",argv[at+1],err.c_str()); return 2; }
+    Connectivity c; c.build(d); SpiceOptions o; std::string outPath;
+    for(int i=at+2;i<argc;i++){ std::string a=argv[i]; if(a=="--tran"&&i+2<argc){o.analysis=SpiceOptions::TRAN;o.tstep=spiceSI(argv[++i]);o.tstop=spiceSI(argv[++i]);} else if(a=="--ac"&&i+3<argc){o.analysis=SpiceOptions::AC;o.fstart=spiceSI(argv[++i]);o.fstop=spiceSI(argv[++i]);o.pointsPerDecade=std::atoi(argv[++i]); if(o.pointsPerDecade<1){std::fprintf(stderr,"--ac pointsPerDecade must be positive\n");return 2;}} else if(a=="--source"&&i+1<argc)o.dcSource=argv[++i]; else if(a=="--dc"&&i+4<argc){o.analysis=SpiceOptions::DC;o.dcSource=argv[++i];o.dcStart=spiceSI(argv[++i]);o.dcStop=spiceSI(argv[++i]);o.dcStep=spiceSI(argv[++i]);} else if(a=="--out"&&i+1<argc) outPath=argv[++i]; else {std::fprintf(stderr,"unknown or incomplete SPICE option: %s\n",a.c_str());return 2;} }
+    std::string why; if(!ngspiceAvailable(&why)){ std::fprintf(stderr,"SPICE unavailable: %s\\nInstall ngspice or set DE_NGSPICE_LIB.\\n",why.c_str()); return 3; }
+    AnalysisResult r; if(!runSpiceAnalysis(d,c,o,r)){ std::fprintf(stderr,"SPICE failed: %s\\n%s",r.error.c_str(),r.log.c_str()); return 4; }
+    FILE* f=outPath.empty()?stdout:std::fopen(outPath.c_str(),"w"); if(!f){std::fprintf(stderr,"cannot write %s\\n",outPath.c_str());return 5;}
+    std::fprintf(f,"scale"); for(auto& n:r.vecNames) std::fprintf(f,",%s",n.c_str()); std::fprintf(f,"\n"); for(size_t row=0;row<r.scale.size();row++){std::fprintf(f,"%.12g",r.scale[row]); for(auto& col:r.data) std::fprintf(f,",%.12g",row<col.size()?col[row]:0.0); std::fprintf(f,"\n");} if(f!=stdout)std::fclose(f); return 0;
+}
 int selftest() {
     int failures = 0;
     // The assertions below match the English source strings, so pin the language.
@@ -1354,6 +1492,9 @@ int selftest() {
     partDataTests(failures);
     modelTests(failures);
     simTests(failures);
+    spiceExportTests(failures);
+    ngspiceBackendTests(failures);
+    colorCodeTests(failures);
     historyTests(failures);
     layerTests(failures);
     annoTests(failures);
@@ -2887,6 +3028,13 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
             return runMcpServer(port, token) == 0 ? SDL_APP_SUCCESS : SDL_APP_FAILURE;
         }
         if (a == "--selftest") return selftest() == 0 ? SDL_APP_SUCCESS : SDL_APP_FAILURE;
+        if (a == "--spice-run") return spiceCli(argc, argv, i) == 0 ? SDL_APP_SUCCESS : SDL_APP_FAILURE;
+#if DE_NGSPICE_DESKTOP
+        if (a == "--spice-xcheck") {
+            if (i + 1 >= argc) return SDL_APP_FAILURE;
+            return spiceCrossCheck(argv[++i]) == 0 ? SDL_APP_SUCCESS : SDL_APP_FAILURE;
+        }
+#endif
         if (a == "--export-examples") return exportExamples(next()) == 0 ? SDL_APP_SUCCESS : SDL_APP_FAILURE;
         if (a == "--export-i18n") return exportI18n(next()) == 0 ? SDL_APP_SUCCESS : SDL_APP_FAILURE;
         if (a == "--screenshot") g_shot.out = next();

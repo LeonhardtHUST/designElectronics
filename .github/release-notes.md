@@ -2,6 +2,15 @@ Free, open-source electronics design for desktop and phone: breadboard, schemati
 
 📖 **Documentation:** https://rorretbolt.github.io/designElectronics/ · 🌐 **Try it in your browser:** https://rorretbolt.github.io/designElectronics/#app
 
+## What's new in 0.8
+
+- **Optional ngspice precision analysis.** Desktop builds can load libngspice at runtime for `.tran`, `.ac` and `.dc` analysis without changing the existing real-time simulator.
+- **SPICE export improvements.** Exported netlists cover passive parts, semiconductor models, regulators, switches, board rails, analysis directives and skipped-model diagnostics.
+- **SPICE CLI and regression checks.** Use `--spice-run` for CSV analysis output and `--spice-xcheck` to compare supported circuits with the built-in simulator.
+- **Colour-code tools.** Calculate resistor bands, capacitor markings and component labels from the Tools menu.
+
+See [docs/NGSPICE.md](../docs/NGSPICE.md) for runtime library setup and platform limitations.
+
 ## What's new in 0.7
 
 - **Pictures on the design.** Paste a screenshot with Ctrl+V, drop an image file on the window, or use the new **Picture** button: PNG, JPEG, GIF (first frame), BMP, WebP, PSD and SVG. Drag a corner or an edge to resize (Shift keeps the proportions), drag the handle above the picture to rotate it (Shift snaps to 15°). The inspector adds a backdrop for transparent pictures, a solid or dashed frame in four widths and the stroke palette, the rotation and "original proportions". SVG stays sharp at every zoom.

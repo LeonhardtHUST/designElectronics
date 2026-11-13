@@ -1192,7 +1192,9 @@ void App::drawPrims(const PartInst& p, int v, const Camera& c, bool forIcon) {
                 int align = pr.align;
                 if (xf.flip) align = 2 - align;
                 float ang = xf.rot == 1 ? 90.f : xf.rot == 3 ? -90.f : 0.f;
-                FontFace face = pr.tag == 2 ? FONT_MONO : FONT_UI;
+                // Everything printed on a component (breadboard bodies, PCB silkscreen) is monospaced,
+         // like marking ink; only the schematic symbols keep the interface face.
+         FontFace face = (pr.tag == 2 || v != SCH) ? FONT_MONO : FONT_UI;
                 g.text(S(pr.a), text, px, fill, align, face, ang);
                 break;
             }
@@ -1490,7 +1492,7 @@ void App::drawCanvas(int v, const Camera& c, Rect vp, bool exporting) {
             if (shownPcb(p, LY_SILK)) drawPrims(p, PCB, c);
             if (showPartLabels && shownPcb(p, LY_LABELS) && p.type != "via" && p.type != "hole") {
                 Rect b = p.worldBounds(PCB);
-                g.text(S({b.x, b.y - 45}), p.label, 50 * z, rgba(255, 255, 255, 230), 0);
+                g.text(S({b.x, b.y - 45}), p.silkLabel(), 50 * z, rgba(255, 255, 255, 230), 0, FONT_MONO);
             }
         }
     } else {

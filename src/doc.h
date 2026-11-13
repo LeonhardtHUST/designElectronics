@@ -14,7 +14,7 @@
 constexpr const char* kFileFormat = "designElectronics";
 constexpr int kFileVersion = 3;  // 2 adds "annos"; 3 adds part "group" (hierarchy levels)
 constexpr const char* kFileExt = ".dez";
-constexpr const char* kAppVersion = "0.7.0";
+constexpr const char* kAppVersion = "0.8.0";
 
 struct PartInst {
     int id = 0;
@@ -34,6 +34,13 @@ struct PartInst {
         auto m = mergedProps(type, props);
         auto it = m.find(k);
         return it == m.end() ? std::string() : it->second;
+    }
+    // What is printed next to the part on the PCB silkscreen: reference + value, so
+    // changing the value in the Inspector changes the ink too.
+    std::string silkLabel() const {
+        if (!def || def->valueProp.empty() || def->valueProp == "pins" || def->netProp == "net") return label;
+        std::string v = prop(def->valueProp);
+        return v.empty() ? label : label + "  " + v;
     }
     bool inView(int v) const { return def && def->inView(v); }
     Vec2 pinPos(int pin, int view) const { return place[view].apply(def->pins[pin].pos[view]); }

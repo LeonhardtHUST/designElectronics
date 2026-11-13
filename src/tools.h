@@ -86,7 +86,25 @@ bool exportGerberZip(const Document& doc, const Connectivity& conn, const std::s
 std::string exportSvg(const Document& doc, const Connectivity& conn, int view);
 std::string exportBomCsv(const Document& doc);
 std::string exportNetlistXml(const Document& doc, const Connectivity& conn);
+struct SpiceOptions {
+    enum Analysis { OP, TRAN, AC, DC } analysis = OP;
+    double tstep = 1e-6, tstop = 1e-3;
+    double fstart = 1.0, fstop = 1e6;
+    int pointsPerDecade = 10;
+    std::string dcSource;
+    double dcStart = 0, dcStop = 5, dcStep = 0.5;
+    bool externalDigital = false;
+};
+struct SpiceNetlist {
+    std::string text;
+    std::map<std::string,int> nodeNet;
+    struct Ext { std::string srcName; int partId; int pin; double rout; };
+    std::vector<Ext> externals;
+    std::vector<std::string> skipped, warnings;
+};
+SpiceNetlist buildSpice(const Document&, const Connectivity&, const SpiceOptions& = SpiceOptions{});
 std::string exportSpice(const Document& doc, const Connectivity& conn);
+std::string exportSpice(const Document& doc, const Connectivity& conn, const SpiceOptions& options);
 
 // Store-only ZIP writer (no compression library needed).
 std::string makeZip(const std::vector<std::pair<std::string, std::string>>& files);

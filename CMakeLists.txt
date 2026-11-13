@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(designElectronics VERSION 0.7.0 LANGUAGES C CXX)
+project(designElectronics VERSION 0.8.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -45,12 +45,15 @@ set(DE_SOURCES
   src/sim.cpp
   src/arduino.cpp
   src/export.cpp
+  src/spice_tests.cpp
   src/examples.cpp
   src/mcp.cpp
   src/logo.cpp
   src/history.cpp
   src/app_history.cpp
   src/panels_layers.cpp
+  src/panels_tools.cpp
+  src/colorcode.cpp
   src/web.cpp
   src/code_editor.cpp
   src/panels_code.cpp
@@ -67,6 +70,9 @@ set(DE_SOURCES
   src/image.cpp
   src/image_impl.cpp
 )
+if(NOT EMSCRIPTEN AND NOT ANDROID AND NOT IOS AND NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+  list(APPEND DE_SOURCES src/ngspice_backend.cpp src/ngspice_tests.cpp src/spice_xcheck.cpp)
+endif()
 
 # Parts library data (parts/*.txt), compiled in.
 file(GLOB DE_PART_DATA CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/parts/*.txt)

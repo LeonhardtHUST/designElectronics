@@ -11,6 +11,7 @@
 #include <functional>
 #include <mutex>
 
+#include "colorcode.h"
 #include "i18n.h"
 
 // ---------------------------------------------------------------------------
@@ -220,20 +221,30 @@ std::vector<std::string> withChips(std::vector<std::string> v, size_t maxChips =
     return v;
 }
 
-const char* bandName[] = {"black", "brown", "red", "orange", "yellow", "green", "blue", "violet", "grey", "white"};
 const uint32_t bandCol[] = {rgba(20, 20, 20), rgba(120, 70, 30), rgba(210, 30, 30), rgba(240, 130, 20), rgba(240, 220, 30),
                             rgba(30, 160, 60), rgba(30, 80, 210), rgba(140, 60, 190), rgba(130, 130, 130), rgba(245, 245, 245)};
 
 void makeResistor(PartDef& d, const Props& p) {
     d.title = "Resistor";
-    d.description = "A resistor limits current. Edit the resistance in the Inspector; the color bands update automatically.";
+    d.description = "A resistor limits current. Edit the resistance in the Inspector; the color bands update automatically. Choose 3, 4, 5 or 6 bands.";
     d.labelPrefix = "R";
     d.valueProp = "resistance";
     d.sim = "resistor";
+    cc::Spec spec = cc::specFromProps(p);
     d.propDefs = {{"resistance", "Resistance", {"100Ω", "220Ω", "330Ω", "470Ω", "1kΩ", "2.2kΩ", "4.7kΩ", "10kΩ", "47kΩ", "100kΩ", "1MΩ"}},
-                  {"power", "Power", {"1/8W", "1/4W", "1/2W", "1W"}},
-                  {"tolerance", "Tolerance", {"±1%", "±5%", "±10%"}},
-                  {"package", "Package", withChips({"Axial [THT]"})}};
+    {"bands", "Color bands", {"3", "4", "5", "6"}},
+           {"power", "Power", {"1/8W", "1/4W", "1/2W", "1W"}}};
+    if (spec.bands >= 4) {
+        PropDef tol{"tolerance", "Tolerance", {}};
+        for (double t : cc::toleranceChoices()) tol.options.push_back(cc::formatTolerance(t));
+ d.propDefs.push_back(tol);
+    }
+    if (spec.bands == 6) {
+        PropDef tc{"tempco", "Temp. coefficient", {}};
+        for (int t : cc::tempcoChoices()) tc.options.push_back(cc::formatPpm(t));
+        d.propDefs.push_back(tc);
+    }
+    d.propDefs.push_back({"package", "Package", withChips({"Axial [THT]"})});
     addPin(d, "pin0", "Pin 0", {0, 0}, {0, 0}, {0, 0});
     addPin(d, "pin1", "Pin 1", {400, 0}, {400, 0}, {400, 0});
 
@@ -246,24 +257,15 @@ void makeResistor(PartDef& d, const Props& p) {
     bb.rect(115, -38, 170, 76, body);
     bb.line(115, -38, 285, -38, 6, edge);
     bb.line(115, 38, 285, 38, 6, edge);
-    // color bands
-    double ohms = parseSI(prop(p, "resistance", "220"), 220);
-    int d1 = 0, d2 = 0, mult = 0;
-    if (ohms > 0) {
-        int e = (int)std::floor(std::log10(ohms)) - 1;
-        double sig = std::round(ohms / std::pow(10.0, e));
-        if (sig >= 100) { sig /= 10; e++; }
-        d1 = (int)sig / 10; d2 = (int)sig % 10; mult = e;
+    // colour bands: the same encoder the Color Code tool uses
+    cc::Bands bands = cc::encode(spec);
+    float bx[6], bw = 0;
+    cc::bandLayout(bands.n, bx, bw);
+    for (int i = 0; i < bands.n; i++) {
+        if (bands.color[i] == cc::NONE) continue;  // no tolerance band = ±20 %
+        float x = 115 + bx[i] * 170;
+        bb.rect(x, i == 0 ? -46 : -38, bw * 170, i == 0 ? 92 : 76, cc::colorRgba(bands.color[i]));
     }
-    float bx[] = {110, 150, 190, 255};
-    uint32_t bc[4] = {bandCol[d1 % 10], bandCol[d2 % 10],
-                      mult >= 0 && mult <= 9 ? bandCol[mult] : (mult == -1 ? rgba(200, 160, 40) : rgba(200, 200, 200)),
-                      rgba(200, 160, 40)};
-    std::string tol = prop(p, "tolerance");
-    if (tol.find("1%") != std::string::npos && tol.find("10") == std::string::npos) bc[3] = bandCol[1];
-    if (tol.find("10%") != std::string::npos) bc[3] = rgba(200, 200, 200);
-    for (int i = 0; i < 4; i++) bb.rect(bx[i], i == 0 ? -46 : -38, 22, i == 0 ? 92 : 76, bc[i]);
-    (void)bandName;
 
     G s{d.gfx[SCH]};
     s.line(0, 0, 100, 0, SW, INK);
@@ -273,7 +275,7 @@ void makeResistor(PartDef& d, const Props& p) {
     G pc{d.gfx[PCB]};
     silkRect(pc, 70, -45, 260, 90);
     std::string pk = prop(p, "package", "Axial [THT]");
-    if (pk != "Axial [THT]") applyPackage(d, pk, {0, 1}, formatSI(ohms, ""), "resistor");
+    if (pk != "Axial [THT]") applyPackage(d, pk, {0, 1}, cc::resistorMarking(spec.ohms, spec.tolerance), "resistor");
 }
 
 struct LedColor { const char* name; uint32_t c; };
@@ -345,7 +347,8 @@ void makeCapCeramic(PartDef& d, const Props& p) {
     bb.line(0, -120, 0, 0, 14, LEG);
     bb.line(100, -120, 100, 0, 14, LEG);
     bb.circle(50, -190, 85, rgba(235, 165, 50), rgba(190, 120, 30), 6);
-    bb.text(50, -190, "104", 40, rgba(90, 50, 10));
+    std::string capMark = cc::capacitorMarking(parseSI(prop(p, "capacitance", "100nF"), 1e-7));  // the printed code follows the value
+    bb.text(50, -190, capMark, 40, rgba(90, 50, 10));
     G s{d.gfx[SCH]};
     s.line(0, 0, 130, 0, SW, INK);
     s.line(170, 0, 300, 0, SW, INK);
@@ -354,7 +357,7 @@ void makeCapCeramic(PartDef& d, const Props& p) {
     G pc{d.gfx[PCB]};
     silkRect(pc, -70, -55, 240, 110);
     std::string pk = prop(p, "package", "Radial [THT]");
-    if (pk != "Radial [THT]") applyPackage(d, pk, {0, 1}, "");
+    if (pk != "Radial [THT]") applyPackage(d, pk, {0, 1}, capMark);
 }
 
 void makeCapElectrolytic(PartDef& d, const Props& p) {
@@ -374,6 +377,8 @@ void makeCapElectrolytic(PartDef& d, const Props& p) {
     bb.rect(-60, -420, 60, 330, rgba(180, 190, 210), 0, 0, 20);
     bb.text(-30, -330, "−", 50, rgba(40, 70, 160));
     bb.text(-30, -200, "−", 50, rgba(40, 70, 160));
+    bb.text(75, -300, prop(p, "capacitance", "100µF"), 36, rgba(235, 235, 245));
+    bb.text(75, -240, prop(p, "voltage", "16V"), 32, rgba(235, 235, 245));
     bb.rect(-60, -420, 220, 30, rgba(160, 165, 175), 0, 0, 14);
     G s{d.gfx[SCH]};
     s.line(0, 0, 130, 0, SW, INK);
@@ -405,6 +410,10 @@ void makeDiode(PartDef& d, const Props& p) {
     bbLeg(bb, {290, 0}, {400, 0});
     bb.rect(100, -40, 200, 80, rgba(35, 35, 35), 0, 0, 16);
     bb.rect(250, -40, 26, 80, rgba(200, 200, 200));
+    {
+ std::string part = prop(p, "part", "1N4001");
+        bb.text(172, 0, part, std::min(30.f, 140.f / std::max<size_t>(part.size(), 1) * 1.6f), rgba(200, 200, 200));
+    }
     G s{d.gfx[SCH]};
     s.line(0, 0, 100, 0, SW, INK);
     s.line(200, 0, 300, 0, SW, INK);
@@ -434,6 +443,7 @@ void makeInductor(PartDef& d, const Props& p) {
     bbLeg(bb, {290, 0}, {400, 0});
     bb.rect(100, -55, 200, 110, rgba(60, 130, 80), rgba(30, 90, 50), 6, 40);
     for (int i = 0; i < 3; i++) bb.rect(140 + i * 45, -55, 18, 110, bandCol[i == 0 ? 1 : 0]);
+    bb.text(200, -90, prop(p, "inductance", "100µH"), 36, rgba(60, 60, 60));
     G s{d.gfx[SCH]};
     s.line(0, 0, 100, 0, SW, INK);
     s.line(300, 0, 400, 0, SW, INK);
@@ -441,7 +451,7 @@ void makeInductor(PartDef& d, const Props& p) {
     G pc{d.gfx[PCB]};
     silkRect(pc, 70, -60, 260, 120);
     std::string pk = prop(p, "package", "Axial [THT]");
-    if (pk != "Axial [THT]") applyPackage(d, pk, {0, 1}, "", "inductor");
+    if (pk != "Axial [THT]") applyPackage(d, pk, {0, 1}, prop(p, "inductance", "100µH"), "inductor");
 }
 
 void makeCrystal(PartDef& d, const Props& p) {
@@ -487,6 +497,7 @@ void makePot(PartDef& d, const Props& p) {
     float w = (float)std::atof(prop(p, "wiper", "50").c_str()) / 100.f;
     float ang = (float)(M_PI * (0.75 + 1.5 * w));
     bb.line(100, -240, 100 + 100 * std::cos(ang), -240 + 100 * std::sin(ang), 22, rgba(90, 90, 90));
+    bb.text(100, -100, prop(p, "resistance", "10kΩ"), 36, rgba(235, 235, 235));
     G s{d.gfx[SCH]};
     s.line(0, 0, 100, 0, SW, INK);
     s.line(300, 0, 400, 0, SW, INK);
@@ -797,12 +808,11 @@ void makeIcDip(PartDef& d, const Props& p) {
 }
 
 void make555(PartDef& d, const Props& p) {
-    (void)p;
     d.title = "555 Timer";
     d.description = "The classic NE555 timer for oscillators, delays and PWM. Datasheet: https://www.ti.com/lit/ds/symlink/ne555.pdf";
     d.valueProp = "part";
     d.propDefs = {{"part", "Part #", {"NE555", "LM555", "TLC555"}}};
-    makeDip(d, 8, "555", {"GND", "TRIG", "OUT", "RESET", "CTRL", "THR", "DIS", "VCC"});
+    makeDip(d, 8, prop(p, "part", "NE555"), {"GND", "TRIG", "OUT", "RESET", "CTRL", "THR", "DIS", "VCC"});
     d.sim = "555";
     d.simParams = "U GND=1,TRIG=2,OUT=3,RESET=4,CTRL=5,THR=6,DIS=7,VCC=8";
     d.description += " Fully simulated: build an astable circuit and watch the LED blink.";
@@ -1434,7 +1444,7 @@ void makeBoard(PartDef& d, const Props& p) {
 
 const std::map<std::string, Gen>& generators() {
     static std::map<std::string, Gen> g = {
-        {"resistor", {"Resistor", "Core", {{"resistance", "220Ω"}, {"power", "1/4W"}, {"tolerance", "±5%"}, {"package", "Axial [THT]"}}, makeResistor}},
+        {"resistor", {"Resistor", "Core", {{"resistance", "220Ω"}, {"power", "1/4W"}, {"tolerance", "±5%"}, {"bands", "4"}, {"tempco", "100ppm"}, {"package", "Axial [THT]"}}, makeResistor}},
         {"led", {"LED", "Core", {{"color", "Red"}, {"package", "5 mm [THT]"}}, makeLed}},
         {"capacitor_ceramic", {"Ceramic Capacitor", "Core", {{"capacitance", "100nF"}, {"voltage", "50V"}, {"package", "Radial [THT]"}}, makeCapCeramic}},
         {"capacitor_electrolytic", {"Electrolytic Capacitor", "Core", {{"capacitance", "100µF"}, {"voltage", "16V"}}, makeCapElectrolytic}},

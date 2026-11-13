@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "colorcode.h"
 #include "doc.h"
 #include "gfx.h"
 #include "history.h"
@@ -292,6 +293,7 @@ public:
     void drawImageAnno(const Anno& a, int v, const Camera& c, float zoom, float uiScale, bool selected, bool hovered);
     void setImageRotation(const std::set<int>& ids, float degrees);  // inspector / handles
     void setPartProp(int partId, const std::string& key, const std::string& value);
+    void setPartProps(int partId, const Props& values);  // several properties, one undo step
     void bringToFront(bool front);
     void runAutoroute();
     void tidyCommand();
@@ -456,6 +458,24 @@ public:
     std::vector<MenuItem> contextMenu(const Hit& h);
     bool renderViewPng(int v, const std::string& path, std::string* msg);
 
+    // ---- panels_tools.cpp: the Tools collection (menu, start page) ----
+    // Tools are small stand-alone utilities. Each opens as a sheet, so they work from the
+    // start page (before any project exists) and over a design alike.
+    struct ToolEntry {
+ const char* id;       // stable id; i18n keys are tool.<id>.name / tool.<id>.desc
+ const char* icon;
+        void (App::*open)();
+    };
+    static const std::vector<ToolEntry>& toolList();
+    std::vector<MenuItem> toolsMenu();
+    void openColorCodeTool();   // Tools ▸ Resistor color code
+    cc::Spec toolCalc;   // the stand-alone calculator remembers its last resistor
+    int toolCalcBand = 0;
+    int inspBandSel = 0; // selected band of the Inspector's calculator
+    // The calculator itself: bands drawn on a resistor, a palette, the value fields.
+    // Lays out from (x, y) downwards, advances y, returns true when `spec` changed.
+    bool colorCalcWidget(const std::string& id, float x, float& y, float w, cc::Spec& spec, int& sel);
+
     // ---- panels.cpp ----
     void drawTopBar();
     void drawPartsBin(Rect r);
@@ -471,6 +491,6 @@ public:
     std::vector<MenuItem> partMenu();
     std::vector<MenuItem> viewMenu();
     std::vector<MenuItem> routingMenu();
-    std::vector<MenuItem> helpMenu();
+    std::vector<MenuItem> helpMenu();   // (toolsMenu is declared with the tools above)
     std::vector<MenuItem> allMenus();
 };

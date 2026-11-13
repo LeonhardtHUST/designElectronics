@@ -3,6 +3,7 @@
 #include <cstdio>
 
 #include "app.h"
+#include "colorcode.h"
 #include "i18n.h"
 #include "logo.h"
 #include "partmodels.h"
@@ -200,7 +201,8 @@ std::vector<MenuItem> App::helpMenu() {
 
 std::vector<MenuItem> App::allMenus() {
     return {sub(tr("menu.title.file"), fileMenu()), sub(tr("menu.title.edit"), editMenu()), sub(tr("menu.title.part"), partMenu()),
-            sub(tr("menu.title.view"), viewMenu()), sub(tr("menu.title.routing"), routingMenu()), sub(tr("menu.title.help"), helpMenu())};
+            sub(tr("menu.title.view"), viewMenu()), sub(tr("menu.title.routing"), routingMenu()), sub(tr("menu.title.tools"), toolsMenu()),
+     sub(tr("menu.title.help"), helpMenu())};
 }
 
 // ---------------------------------------------------------------------------
@@ -225,13 +227,13 @@ void App::drawTopBar() {
         x += 34 * s;
         // Ids stay numeric so a language switch cannot disturb button state.
         const char* nameKeys[] = {"menu.title.file", "menu.title.edit", "menu.title.part",
-                                  "menu.title.view", "menu.title.routing.short", "menu.title.help"};
-        for (int i = 0; i < 6; i++) {
+                                  "menu.title.view", "menu.title.routing.short", "menu.title.tools", "menu.title.help"};
+        for (int i = 0; i < 7; i++) {
             const std::string& name = tr(nameKeys[i]);
             float w = g.textWidth(name, 14 * s) + 20 * s;
             Rect b(x, y, w, h);
             if (ui.button("mnu" + std::to_string(i), b, name, BTN_FLAT)) {
-                std::vector<MenuItem> m = i == 0 ? fileMenu() : i == 1 ? editMenu() : i == 2 ? partMenu() : i == 3 ? viewMenu() : i == 4 ? routingMenu() : helpMenu();
+                std::vector<MenuItem> m = i == 0 ? fileMenu() : i == 1 ? editMenu() : i == 2 ? partMenu() : i == 3 ? viewMenu() : i == 4 ? routingMenu() : i == 5 ? toolsMenu() : helpMenu();
                 ui.openMenu(b, m);
             }
             x += w;
@@ -469,6 +471,15 @@ void App::drawInspector(Rect r) {
             Props merged = mergedProps(p->type, p->props);
             PartDefPtr def = p->def;  // keep alive while editing
             for (auto& pd : def->propDefs) {
+  // A resistor's value, band count, tolerance and temperature coefficient are
+         // edited together in the colour code calculator below.
+  if (p->type == "resistor" && (pd.key == "resistance" || pd.key == "bands" || pd.key == "tolerance" || pd.key == "tempco")) {
+      if (pd.key != "resistance") continue;
+      heading(tr("cc.heading"));
+      cc::Spec spec = cc::specFromProps(merged);
+      if (colorCalcWidget("inspcc" + std::to_string(pid), x, y, w, spec, inspBandSel)) setPartProps(pid, cc::propsFromSpec(spec));
+      continue;
+         }
                 label(propLabel(pd));
                 std::string val = merged[pd.key];
                 if (ui.comboField("prop" + std::to_string(pid) + pd.key, Rect(x + lw, y, w - lw, rowH - 4 * s), val, pd.options, editableProp(pd),

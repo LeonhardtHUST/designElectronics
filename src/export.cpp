@@ -1,5 +1,8 @@
 // Exporters: Gerber RS-274X + Excellon (zipped, fab-ready), SVG, BOM, netlist, SPICE.
 #include <cmath>
+#include <cctype>
+#include <algorithm>
+#include <cstdlib>
 #include <cstdio>
 #include <ctime>
 #include <map>
@@ -285,7 +288,7 @@ bool exportGerberZip(const Document& doc, const Connectivity& conn, const std::s
         for (auto& prim : p.def->gfx[PCB]) silkPrim(silk, prim, p.place[PCB]);
         if (p.type != "via" && p.type != "hole") {
             Rect r = p.worldBounds(PCB);
-            for (auto& s : strokeText(p.label, {r.x, r.y - 45}, 50, 0)) silk.line(s.first, s.second, 7);
+            for (auto& s : strokeText(p.silkLabel(), {r.x, r.y - 45}, 50, 0)) silk.line(s.first, s.second, 7);
         }
     }
     for (auto& w : doc.wires) {
@@ -369,7 +372,7 @@ static std::string esc(const std::string& s) {
     return o;
 }
 
-static void svgPrim(std::string& o, const Prim& p, const Xform& xf) {
+static void svgPrim(std::string& o, const Prim& p, const Xform& xf, bool mono = false) {
     char b[512];
     std::string fill = (p.fill & 0xFF) ? "fill=\"" + svgColor(p.fill) + "\"" + svgOpacity(p.fill, "fill") : "fill=\"none\"";
     std::string stroke = (p.stroke & 0xFF) && p.w > 0 ? "stroke=\"" + svgColor(p.stroke) + "\" stroke-width=\"" + std::to_string(p.w) + "\" stroke-linecap=\"round\" stroke-linejoin=\"round\"" + svgOpacity(p.stroke, "stroke") : "";
@@ -416,8 +419,8 @@ static void svgPrim(std::string& o, const Prim& p, const Xform& xf) {
             int al = p.align;
             if (xf.flip) al = 2 - al;
             const char* anchor = al == 0 ? "start" : al == 1 ? "middle" : "end";
-            snprintf(b, sizeof b, "<text x=\"%.1f\" y=\"%.1f\" font-family=\"Sarasa Gothic SC, Noto Sans SC, Microsoft YaHei, PingFang SC, Helvetica, Arial, sans-serif\" font-size=\"%.1f\" text-anchor=\"%s\" dominant-baseline=\"central\" fill=\"%s\">",
-                     a.x, a.y, p.size, anchor, svgColor(p.fill).c_str());
+            snprintf(b, sizeof b, "<text x=\"%.1f\" y=\"%.1f\" font-family=\"%s\" font-size=\"%.1f\" text-anchor=\"%s\" dominant-baseline=\"central\" fill=\"%s\">",
+                     a.x, a.y, mono ? "JetBrains Maple Mono, JetBrains Mono, Consolas, Menlo, monospace" : "Sarasa Gothic SC, Noto Sans SC, Microsoft YaHei, PingFang SC, Helvetica, Arial, sans-serif", p.size, anchor, svgColor(p.fill).c_str());
             o += b;
             o += esc(p.text) + "</text>\n";
             break;
@@ -481,7 +484,7 @@ std::string exportSvg(const Document& doc, const Connectivity& conn, int view) {
         for (auto& w : doc.wires) if (w.view == PCB && w.layer == TOP) drawWire(w);
         for (auto& p : doc.parts) {
             if (!p.inView(PCB) || p.def->isBoard) continue;
-            for (auto& pr : p.def->gfx[PCB]) svgPrim(o, pr, p.place[PCB]);
+            for (auto& pr : p.def->gfx[PCB]) svgPrim(o, pr, p.place[PCB], true);
             for (auto& h : p.def->holes) {
                 Vec2 c = p.place[PCB].apply(h.first);
                 snprintf(b, sizeof b, "<circle cx=\"%.1f\" cy=\"%.1f\" r=\"%.1f\" fill=\"#1d1d1d\"/>\n", c.x, c.y, h.second / 2);
@@ -492,7 +495,7 @@ std::string exportSvg(const Document& doc, const Connectivity& conn, int view) {
         for (auto& p : doc.parts) {
             if (!p.inView(view)) continue;
             o += "<g id=\"" + esc(p.label) + "\">\n";
-            for (auto& pr : p.def->gfx[view]) svgPrim(o, pr, p.place[view]);
+            for (auto& pr : p.def->gfx[view]) svgPrim(o, pr, p.place[view], view != SCH);
             if (view == SCH && !p.def->isBreadboard && p.def->netProp.empty()) {
                 Rect r = p.worldBounds(SCH);
                 std::string lbl = p.label;
@@ -585,66 +588,237 @@ std::string exportNetlistXml(const Document& doc, const Connectivity& conn) {
     return o;
 }
 
-std::string exportSpice(const Document& doc, const Connectivity& conn) {
-    std::string o = "* " + doc.title + " — SPICE netlist exported by designElectronics\n";
-    auto node = [&](const PartInst& p, const char* pin) -> std::string {
-        int pi = p.def->pinIndex(pin);
-        if (pi < 0) return "NC";
-        int n = conn.netOf(p.id, pi);
-        std::string name = conn.netName(n);
-        return name == "GND" ? "0" : name;
-    };
-    bool needLed = false, needDiode = false, needNpn = false, needPnp = false;
-    char b[256];
-    for (auto& p : doc.parts) {
-        if (!p.def) continue;
-        const std::string& m = p.def->sim;
-        if (m == "resistor") { snprintf(b, sizeof b, "R%s %s %s %g\n", p.label.c_str(), node(p, "pin0").c_str(), node(p, "pin1").c_str(), parseSI(p.prop("resistance"), 220)); o += b; }
-        else if (m == "potentiometer") {
-            double r = parseSI(p.prop("resistance"), 1e4), w = std::atof(p.prop("wiper").c_str()) / 100;
-            snprintf(b, sizeof b, "R%sA %s %s %g\nR%sB %s %s %g\n", p.label.c_str(), node(p, "leg1").c_str(), node(p, "wiper").c_str(), std::max(0.5, r * w),
-                     p.label.c_str(), node(p, "wiper").c_str(), node(p, "leg2").c_str(), std::max(0.5, r * (1 - w)));
-            o += b;
-        } else if (m == "capacitor") { snprintf(b, sizeof b, "C%s %s %s %g\n", p.label.c_str(), node(p, p.def->pinIndex("plus") >= 0 ? "plus" : "pin0").c_str(), node(p, p.def->pinIndex("minus") >= 0 ? "minus" : "pin1").c_str(), parseSI(p.prop("capacitance"), 1e-7)); o += b; }
-        else if (m == "inductor") { snprintf(b, sizeof b, "L%s %s %s %g\n", p.label.c_str(), node(p, "pin0").c_str(), node(p, "pin1").c_str(), parseSI(p.prop("inductance"), 1e-4)); o += b; }
-        else if (m == "battery") { snprintf(b, sizeof b, "V%s %s %s DC %g\n", p.label.c_str(), node(p, "plus").c_str(), node(p, "minus").c_str(), parseSI(p.prop("voltage"), 9)); o += b; }
-        else if (m == "led") { snprintf(b, sizeof b, "D%s %s %s LED_%s\n", p.label.c_str(), node(p, "anode").c_str(), node(p, "cathode").c_str(), p.prop("color").c_str()); o += b; needLed = true; }
-        else if (m == "diode") { snprintf(b, sizeof b, "D%s %s %s DGEN\n", p.label.c_str(), node(p, "anode").c_str(), node(p, "cathode").c_str()); o += b; needDiode = true; }
-        else if (m == "npn") { snprintf(b, sizeof b, "Q%s %s %s %s QNPN\n", p.label.c_str(), node(p, "C").c_str(), node(p, "B").c_str(), node(p, "E").c_str()); o += b; needNpn = true; }
-        else if (m == "pnp") { snprintf(b, sizeof b, "Q%s %s %s %s QPNP\n", p.label.c_str(), node(p, "C").c_str(), node(p, "B").c_str(), node(p, "E").c_str()); o += b; needPnp = true; }
-        else if (m == "board") {
-            // one DC source per power rail named in simParams ("RAIL 5V=5;RAIL 3V3=3.3")
-            std::vector<std::string> items;
-            for (size_t a = 0, e; a <= p.def->simParams.size(); a = e + 1) {
-                e = p.def->simParams.find(';', a);
-                if (e == std::string::npos) e = p.def->simParams.size();
-                items.push_back(p.def->simParams.substr(a, e - a));
-            }
-            for (auto& item : items) {
-                if (item.rfind("RAIL ", 0) != 0) continue;
-                size_t eq = item.rfind('=');
-                if (eq == std::string::npos) continue;
-                std::string rail = item.substr(5, eq - 5);
-                int pin = -1;
-                for (size_t i = 0; i < p.def->pins.size(); i++) if (p.def->pins[i].name == rail) { pin = (int)i; break; }
-                if (pin < 0) continue;
-                snprintf(b, sizeof b, "V%s_%s %s %s DC %s\n", p.label.c_str(), p.def->pins[(size_t)pin].id.c_str(), node(p, p.def->pins[(size_t)pin].id.c_str()).c_str(),
-                         node(p, "GND").c_str(), item.substr(eq + 1).c_str());
-                o += b;
-            }
-        }
-        else if (m == "motor") { snprintf(b, sizeof b, "R%s %s %s 10 ; DC motor approximated as 10 ohm\n", p.label.c_str(), node(p, "pin1").c_str(), node(p, "pin0").c_str()); o += b; }
-    }
-    if (needLed) {
-        for (const char* c : {"Red", "Green", "Blue", "Yellow", "White", "Orange"}) {
-            double n = std::string(c) == "Blue" || std::string(c) == "White" ? 3.5 : 1.9;
-            snprintf(b, sizeof b, ".model LED_%s D(IS=1e-22 N=%.2f RS=10)\n", c, n);
-            o += b;
-        }
-    }
-    if (needDiode) o += ".model DGEN D(IS=2.5n RS=0.04 N=1.75)\n";
-    if (needNpn) o += ".model QNPN NPN(BF=200 IS=1e-14)\n";
-    if (needPnp) o += ".model QPNP PNP(BF=200 IS=1e-14)\n";
-    o += ".op\n.end\n";
-    return o;
+static std::string spiceClean(const std::string& in) {
+    std::string out;
+    for (unsigned char c : in) out += (std::isalnum(c) || c == '_') ? (char)std::tolower(c) : '_';
+    if (out.empty()) out = "n";
+    return out == "gnd" ? "0" : out;
 }
+
+#if 0
+SpiceNetlist buildSpice(const Document& doc, const Connectivity& conn, const SpiceOptions& opt) {
+    SpiceNetlist result;
+    std::string o = "* " + doc.title + " - SPICE netlist exported by designElectronics\n";
+    std::set<std::string> models;
+    auto trim = [](std::string s) { while (!s.empty() && std::isspace((unsigned char)s.front())) s.erase(s.begin()); while (!s.empty() && std::isspace((unsigned char)s.back())) s.pop_back(); return s; };
+    auto kv = [&](const PartDef& d, const std::string& key, const std::string& def = "") { std::string k = key + "="; size_t p = d.simParams.find(k); if (p == std::string::npos) return def; size_t e = d.simParams.find(';', p); return trim(d.simParams.substr(p + k.size(), e == std::string::npos ? std::string::npos : e - p - k.size())); };
+    auto item = [&](const PartDef& d, const std::string& key) { std::string k = key + " "; size_t p = d.simParams.find(k); if (p == std::string::npos) return std::string(); size_t e = d.simParams.find(';', p); return trim(d.simParams.substr(p + k.size(), e == std::string::npos ? std::string::npos : e - p - k.size())); };
+    auto node = [&](const PartInst& p, const std::string& pinName) {
+        int pi = p.def ? p.def->pinIndex(pinName) : -1;
+        if (pi < 0 && p.def) {
+            bool numeric = !pinName.empty();
+            for (char c : pinName) if (!std::isdigit((unsigned char)c)) numeric = false;
+            if (numeric) {
+                int oneBased = std::atoi(pinName.c_str());
+                if (oneBased > 0 && oneBased <= (int)p.def->pins.size()) pi = oneBased - 1;
+            }
+            for (size_t i = 0; pi < 0 && i < p.def->pins.size(); ++i)
+                if (p.def->pins[i].name == pinName || p.def->pins[i].id == pinName) pi = (int)i;
+        }
+        if (pi < 0) return std::string("nc");
+        int n = conn.netOf(p.id, pi); std::string netName = conn.netName(n);
+        std::string name = (netName == "GND" || netName == "0") ? "0" : "n" + std::to_string(n) + "_" + spiceClean(netName);
+        result.nodeNet[name] = n; return name;
+    };
+    auto pin = [&](const PartInst& p, int i) { return (p.def && i >= 0 && i < (int)p.def->pins.size()) ? node(p, p.def->pins[(size_t)i].id) : std::string("nc"); };
+    auto addModel = [&](const std::string& name, const std::string& body) { if (models.insert(name).second) o += ".model " + name + " " + body + "\n"; };
+    auto id = [&](const PartInst& p) { return spiceClean(p.label.empty() ? (p.type + std::to_string(p.id)) : p.label) + "_" + std::to_string(p.id); };
+    char b[768];
+    for (const auto& p : doc.parts) {
+        if (!p.def) continue; const std::string& m = p.def->sim; const std::string q = id(p);
+        if (m == "resistor") { snprintf(b,sizeof b,"R%s %s %s %g\n",q.c_str(),pin(p,0).c_str(),pin(p,1).c_str(),parseSI(p.prop("resistance"),220)); o+=b; }
+        else if (m == "capacitor") { snprintf(b,sizeof b,"C%s %s %s %g\n",q.c_str(),pin(p,0).c_str(),pin(p,1).c_str(),parseSI(p.prop("capacitance"),1e-7)); o+=b; }
+        else if (m == "inductor") { snprintf(b,sizeof b,"L%s %s %s %g\n",q.c_str(),pin(p,0).c_str(),pin(p,1).c_str(),parseSI(p.prop("inductance"),1e-4)); o+=b; }
+        else if (m == "potentiometer") { double r=parseSI(p.prop("resistance"),1e4),w=std::atof(p.prop("wiper").c_str())/100.; snprintf(b,sizeof b,"R%s_a %s %s %g\nR%s_b %s %s %g\n",q.c_str(),node(p,"leg1").c_str(),node(p,"wiper").c_str(),std::max(.5,r*w),q.c_str(),node(p,"wiper").c_str(),node(p,"leg2").c_str(),std::max(.5,r*(1-w))); o+=b; }
+        else if (m == "battery") { bool ac = opt.analysis == SpiceOptions::AC && (opt.dcSource.empty() || opt.dcSource == p.label || opt.dcSource == p.type || opt.dcSource == q); snprintf(b,sizeof b,"V%s %s %s DC %g%s\n",q.c_str(),node(p,"plus").c_str(),node(p,"minus").c_str(),parseSI(p.prop("voltage"),9),ac ? " AC 1" : ""); o+=b; }
+        else if (m == "diode" || m == "led") { std::string mn=m=="led"?"led_gen":"dgen"; addModel(mn,m=="led"?"D(IS=1e-20 N=1.9 RS=1 CJO=10p)":"D(IS=2.5n RS=0.04 N=1.75)"); snprintf(b,sizeof b,"D%s %s %s %s\n",q.c_str(),node(p,"anode").c_str(),node(p,"cathode").c_str(),mn.c_str()); o+=b; }
+        else if (m == "npn" || m == "pnp") { std::string mn=m=="npn"?"qnpn":"qpnp"; addModel(mn,(m=="npn"?"NPN":"PNP")+std::string("(BF=200 IS=1e-14 VAF=100)")); snprintf(b,sizeof b,"Q%s %s %s %s %s\n",q.c_str(),node(p,"C").c_str(),node(p,"B").c_str(),node(p,"E").c_str(),mn.c_str()); o+=b; }
+        else if (m == "nmos") { std::string vth=kv(*p.def,"VTH","2"); char* e=nullptr; std::strtod(vth.c_str(),&e); if (!e || !trim(e).empty()) vth="2"; addModel("nmos_model","NMOS (LEVEL=1 VTO="+vth+" KP=2)"); snprintf(b,sizeof b,"M%s %s %s %s %s nmos_model\n",q.c_str(),node(p,"D").c_str(),node(p,"S").c_str(),node(p,"G").c_str(),node(p,"S").c_str()); o+=b; }
+        else if (m == "reg") { std::string in=node(p,"IN"),out=node(p,"OUT"),g=node(p,"GND"); if(g=="nc") g=node(p,"GND"); double v=parseSI(kv(*p.def,"V",p.prop("voltage")),3.3), drop=parseSI(kv(*p.def,"DROP","0"),0); std::string adj=node(p,"ADJ"); if (adj!="nc") v=parseSI(kv(*p.def,"VREF","1.25"),1.25); snprintf(b,sizeof b,"B%s %s %s V=limit(V(%s,%s)-%g,0,%g)\nR%s %s %s 1Meg\n",q.c_str(),out.c_str(),g.c_str(),in.c_str(),g.c_str(),drop,v,q.c_str(),out.c_str(),g.c_str()); o+=b; }
+        else if (m == "opamp" || m == "comparator") { std::string vcc=node(p,"VCC"),g=node(p,"GND"), ip=node(p,"IN+"),im=node(p,"IN-"); std::string oa=item(*p.def,m=="opamp"?"OA":"CMP"); if(!oa.empty()){ size_t c=oa.find('>'); size_t d=oa.find(','); if(c!=std::string::npos&&d!=std::string::npos){ ip=node(p,trim(oa.substr(0,d))); im=node(p,trim(oa.substr(d+1,c-d-1))); } } std::string out=oa.empty()?node(p,"OUT"):node(p,trim(oa.substr(oa.find('>')+1))); double hi=parseSI(kv(*p.def,"HI","0"),0),lo=parseSI(kv(*p.def,"LO","0"),0); double gain=m=="comparator"?1e6:1e5; snprintf(b,sizeof b,"E%s %s %s %s %s %g\nR%s %s %s 1Meg\n",q.c_str(),out.c_str(),g.c_str(),ip.c_str(),im.c_str(),gain,q.c_str(),out.c_str(),g.c_str()); o+=b; if(vcc!="nc") { snprintf(b,sizeof b,"D%s_hi %s %s dlim\nD%s_lo %s %s dlim\n",q.c_str(),out.c_str(),vcc.c_str(),q.c_str(),g.c_str(),out.c_str()); addModel("dlim","D(IS=1e-15 N=1)"); o+=b; } (void)hi; (void)lo; }
+        else if (m == "switch" || m == "pushbutton") { bool on=p.prop("pressed")=="true"||p.prop("pressed")=="yes"||p.prop("position")=="1"; std::string a=m=="switch"?node(p,"common"):node(p,"pin1"), z=m=="switch"?node(p,"a"):node(p,"pin2"); snprintf(b,sizeof b,"R%s %s %s %g\n",q.c_str(),a.c_str(),z.c_str(),on ? 0.1 : 1e12); o+=b; }
+        else if (m == "relay") { std::string coil=item(*p.def,"COIL"); std::string ca,cb; size_t c=coil.find(','); if(c!=std::string::npos){ca=node(p,trim(coil.substr(0,c)));cb=node(p,trim(coil.substr(c+1)));} double r=parseSI(kv(*p.def,"R","70"),70); bool on=p.prop("energized")=="true"; std::string com=node(p,kv(*p.def,"COM","")), no=node(p,kv(*p.def,"NO","")), nc=node(p,kv(*p.def,"NC","")); std::string contact = on ? no : nc; if (ca!="nc" && cb!="nc") snprintf(b,sizeof b,"R%s_coil %s %s %g\n",q.c_str(),ca.c_str(),cb.c_str(),r); if (com!="nc" && contact!="nc") snprintf(b,sizeof b,"R%s_contact %s %s %g\n",q.c_str(),com.c_str(),contact.c_str(),on ? 0.1 : 1e12); else b[0]=0; o+=b; }
+        else if (m == "motor" || m == "buzzer") { snprintf(b,sizeof b,"R%s %s %s 10\n",q.c_str(),pin(p,0).c_str(),pin(p,1).c_str()); o+=b; }
+        else if (m == "board" || m == "logic" || m == "555" || m == "mcu") { if(!opt.externalDigital){result.skipped.push_back(p.label+": digital/MCU model omitted");continue;} for(size_t i=0;i<p.def->pins.size();++i){const auto& pd=p.def->pins[i];if(pd.name=="GND"||pd.name=="VCC")continue;std::string src="Vext_"+q+"_"+spiceClean(pd.id),nn=pin(p,(int)i);o+="V"+src+" "+nn+" 0 DC 0\nR"+src+" "+nn+" 0 1k\n";result.externals.push_back({src,p.id,(int)i,1000});} }
+        else if (!m.empty()) result.skipped.push_back(p.label+": unsupported sim model "+m);
+    }
+    for(int n=0;n<conn.numNets();++n) if(conn.netPins(n).size()<=1 && conn.netName(n)!="GND") o+="Rfloat_"+std::to_string(n)+" n"+std::to_string(n)+"_"+spiceClean(conn.netName(n))+" 0 1e12\n";
+    if(opt.analysis==SpiceOptions::TRAN){snprintf(b,sizeof b,".tran %g %g 0 %g\n",opt.tstep,opt.tstop,std::min(opt.tstep,opt.tstop/1000));o+=b;} else if(opt.analysis==SpiceOptions::AC){snprintf(b,sizeof b,".ac dec %d %g %g\n",opt.pointsPerDecade,opt.fstart,opt.fstop);o+=b;if(opt.dcSource.empty())result.warnings.push_back("AC analysis has no selected source (set dcSource to battery label, type, or generated name)");} else if(opt.analysis==SpiceOptions::DC){std::string src=opt.dcSource.empty()?"battery":opt.dcSource;snprintf(b,sizeof b,".dc V%s %g %g %g\n",spiceClean(src).c_str(),opt.dcStart,opt.dcStop,opt.dcStep);o+=b;} else o+=".op\n"; o+=".end\n"; result.text=o; return result;
+}
+
+#endif
+
+static std::map<std::string, std::string> spiceParams(const PartDef& def) {
+    std::map<std::string, std::string> values;
+    size_t start = 0;
+    while (start < def.simParams.size()) {
+        size_t end = def.simParams.find(';', start);
+        std::string token = def.simParams.substr(start, end == std::string::npos ? std::string::npos : end - start);
+        while (!token.empty() && std::isspace((unsigned char)token.front())) token.erase(token.begin());
+        while (!token.empty() && std::isspace((unsigned char)token.back())) token.pop_back();
+        size_t eq = token.find('=');
+        if (eq != std::string::npos) {
+            std::string key = token.substr(0, eq), value = token.substr(eq + 1);
+            while (!key.empty() && std::isspace((unsigned char)key.back())) key.pop_back();
+            while (!value.empty() && std::isspace((unsigned char)value.front())) value.erase(value.begin());
+            values[key] = value;
+        }
+        if (end == std::string::npos) break;
+        start = end + 1;
+    }
+    return values;
+}
+
+static std::string spiceParam(const PartDef& def, const std::string& key, const std::string& fallback = "") {
+    std::map<std::string, std::string> values = spiceParams(def);
+    std::map<std::string, std::string>::const_iterator it = values.find(key);
+    return it == values.end() ? fallback : it->second;
+}
+
+static bool spicePositive(double value) { return std::isfinite(value) && value > 0; }
+
+SpiceNetlist buildSpice(const Document& doc, const Connectivity& conn, const SpiceOptions& opt) {
+    SpiceNetlist result;
+    std::string out = "* " + doc.title + " - SPICE netlist exported by designElectronics\n";
+    std::set<std::string> models;
+    int groundNet = -1;
+    for (int n = 0; n < conn.numNets(); ++n) {
+        if (conn.netName(n) == "GND" || conn.netName(n) == "0") { groundNet = n; break; }
+    }
+    if (groundNet < 0) {
+        for (const PartInst& part : doc.parts) {
+            if (!part.def) continue;
+            int pin = part.def->pinIndex("minus");
+            if (pin < 0) pin = part.def->pinIndex("GND");
+            if (part.def->sim == "battery" && pin >= 0) { groundNet = conn.netOf(part.id, pin); break; }
+        }
+    }
+    if (groundNet < 0 && conn.numNets() > 0) groundNet = 0;
+    auto clean = [](const std::string& value) {
+        std::string name;
+        for (unsigned char c : value) name += (std::isalnum(c) || c == '_') ? (char)std::tolower(c) : '_';
+        return name.empty() ? std::string("n") : name;
+    };
+    auto node = [&](const PartInst& part, const std::string& ref) {
+        int index = part.def ? part.def->pinIndex(ref) : -1;
+        if (index < 0 && !ref.empty() && std::isdigit((unsigned char)ref[0])) {
+            int oneBased = std::atoi(ref.c_str());
+            if (oneBased > 0 && oneBased <= (int)part.def->pins.size()) index = oneBased - 1;
+        }
+        if (index < 0 && part.def) {
+            for (size_t i = 0; i < part.def->pins.size(); ++i)
+                if (part.def->pins[i].id == ref || part.def->pins[i].name == ref) { index = (int)i; break; }
+        }
+        if (index < 0) return std::string("nc");
+        int net = conn.netOf(part.id, index);
+        if (net == groundNet) { result.nodeNet["0"] = net; return std::string("0"); }
+        std::string name = "n" + std::to_string(net) + "_" + clean(conn.netName(net));
+        result.nodeNet[name] = net;
+        return name;
+    };
+    auto pin = [&](const PartInst& part, int index) {
+        return part.def && index >= 0 && index < (int)part.def->pins.size() ? node(part, part.def->pins[(size_t)index].id) : std::string("nc");
+    };
+    auto model = [&](const std::string& name, const std::string& body) {
+        if (models.insert(name).second) out += ".model " + name + " " + body + "\n";
+    };
+    auto label = [&](const PartInst& part) { return clean(part.label.empty() ? part.type : part.label) + "_" + std::to_string(part.id); };
+    for (const PartInst& part : doc.parts) {
+        if (!part.def) continue;
+        const std::string& sim = part.def->sim;
+        std::string id = label(part);
+        char line[512];
+        if (sim == "resistor") std::snprintf(line, sizeof line, "R%s %s %s %g\n", id.c_str(), pin(part, 0).c_str(), pin(part, 1).c_str(), parseSI(part.prop("resistance"), 220));
+        else if (sim == "capacitor") std::snprintf(line, sizeof line, "C%s %s %s %g\n", id.c_str(), pin(part, 0).c_str(), pin(part, 1).c_str(), parseSI(part.prop("capacitance"), 1e-7));
+        else if (sim == "inductor") std::snprintf(line, sizeof line, "L%s %s %s %g\n", id.c_str(), pin(part, 0).c_str(), pin(part, 1).c_str(), parseSI(part.prop("inductance"), 1e-4));
+        else if (sim == "battery") {
+            double voltage = parseSI(part.prop("voltage"), 9);
+            if (!spicePositive(voltage)) { result.warnings.push_back(part.label + ": invalid battery voltage"); continue; }
+            bool selected = opt.dcSource.empty() || opt.dcSource == "battery" || opt.dcSource == part.label || opt.dcSource == id;
+            std::snprintf(line, sizeof line, "V%s %s %s DC %g%s\n", id.c_str(), node(part, "plus").c_str(), node(part, "minus").c_str(), voltage, opt.analysis == SpiceOptions::AC && selected ? " AC 1" : "");
+        } else if (sim == "diode" || sim == "led") {
+            std::string name = sim == "led" ? "led_model" : "diode_model";
+            model(name, sim == "led" ? "D(IS=1e-20 N=1.9 RS=1)" : "D(IS=2.5n N=1.75 RS=0.04)");
+            std::snprintf(line, sizeof line, "D%s %s %s %s\n", id.c_str(), node(part, "anode").c_str(), node(part, "cathode").c_str(), name.c_str());
+        } else if (sim == "npn" || sim == "pnp") {
+            std::string name = sim == "npn" ? "npn_model" : "pnp_model";
+            model(name, sim == "npn" ? "NPN(BF=200 IS=1e-14)" : "PNP(BF=200 IS=1e-14)");
+            std::snprintf(line, sizeof line, "Q%s %s %s %s %s\n", id.c_str(), node(part, "C").c_str(), node(part, "B").c_str(), node(part, "E").c_str(), name.c_str());
+        } else if (sim == "nmos") {
+            model("nmos_model", "NMOS(LEVEL=1 VTO=2 KP=2)");
+            std::snprintf(line, sizeof line, "M%s %s %s %s %s nmos_model\n", id.c_str(), node(part, "D").c_str(), node(part, "G").c_str(), node(part, "S").c_str(), node(part, "S").c_str());
+        } else if (sim == "potentiometer") {
+            double resistance = parseSI(part.prop("resistance"), 10000), wiper = std::atof(part.prop("wiper").c_str()) / 100.0;
+            wiper = std::max(0.0, std::min(1.0, wiper));
+            std::snprintf(line, sizeof line, "R%s_a %s %s %g\nR%s_b %s %s %g\n", id.c_str(), node(part, "leg1").c_str(), node(part, "wiper").c_str(), std::max(0.5, resistance * wiper), id.c_str(), node(part, "wiper").c_str(), node(part, "leg2").c_str(), std::max(0.5, resistance * (1 - wiper)));
+        } else if (sim == "switch" || sim == "pushbutton") {
+            bool on = part.prop("pressed") == "yes" || part.prop("pressed") == "true" || part.prop("position") == "left";
+            std::snprintf(line, sizeof line, "R%s %s %s %g\n", id.c_str(), sim == "switch" ? node(part, "common").c_str() : node(part, "pin1").c_str(), sim == "switch" ? node(part, "a").c_str() : node(part, "pin2").c_str(), on ? 0.1 : 1e12);
+        } else if (sim == "reg") {
+            std::string in = node(part, spiceParam(*part.def, "IN", "1")), ground = node(part, spiceParam(*part.def, "GND", "2")), output = node(part, spiceParam(*part.def, "OUT", "3"));
+            double target = parseSI(part.prop("voltage"), 5), drop = parseSI(spiceParam(*part.def, "DROP", "0"), 0);
+            std::snprintf(line, sizeof line, "B%s %s %s V=V(%s,%s)-%g\nR%s %s %s 1Meg\n", id.c_str(), output.c_str(), ground.c_str(), in.c_str(), ground.c_str(), drop, id.c_str(), output.c_str(), ground.c_str());
+            (void)target;
+        } else if (sim == "board") {
+            std::map<std::string, std::string> params = spiceParams(*part.def);
+            if (!opt.externalDigital) {
+                result.skipped.push_back(part.label + ": board firmware omitted");
+                continue;
+            }
+            std::string outputs = part.prop("outputs");
+            size_t start = 0;
+            while (start < outputs.size()) {
+                size_t end = outputs.find(',', start);
+                std::string entry = outputs.substr(start, end == std::string::npos ? std::string::npos : end - start);
+                while (!entry.empty() && std::isspace((unsigned char)entry.front())) entry.erase(entry.begin());
+                size_t eq = entry.find('=');
+                if (eq != std::string::npos) {
+                    std::string pinName = entry.substr(0, eq);
+                    std::string source = "Vext_" + id + "_" + clean(pinName);
+                    std::string net = node(part, pinName);
+                    double rail = parseSI(params.count("IO") ? params["IO"] : "5", 5);
+                    out += "V" + source + " " + net + " 0 DC " + std::to_string(rail) + " external\n";
+                    out += "R" + source + " " + net + " 0 " + (params.count("ROUT") ? params["ROUT"] : "25") + "\n";
+                    result.externals.push_back({source, part.id, part.def->pinIndex(pinName), parseSI(params.count("ROUT") ? params["ROUT"] : "25", 25)});
+                }
+                if (end == std::string::npos) break;
+                start = end + 1;
+            }
+            result.skipped.push_back(part.label + ": board firmware omitted; external outputs exported");
+            continue;
+        } else if (sim == "relay" || sim == "motor" || sim == "buzzer" || sim == "meter" || sim == "photocell" || sim == "tl431" || sim == "opto" || sim == "seg7" || sim == "rgbled" || sim == "leds") {
+            result.skipped.push_back(part.label + ": " + sim + " exported as approximation");
+            std::snprintf(line, sizeof line, "R%s %s %s 1Meg\n", id.c_str(), pin(part, 0).c_str(), pin(part, 1).c_str());
+        } else if (sim == "logic" || sim == "555" || sim == "mcu" || sim.empty()) {
+            result.skipped.push_back(part.label + ": digital/unknown model omitted");
+            continue;
+        } else {
+            result.skipped.push_back(part.label + ": unsupported model " + sim);
+            continue;
+        }
+        out += line;
+    }
+    if (opt.analysis == SpiceOptions::TRAN) {
+        if (!spicePositive(opt.tstep) || !spicePositive(opt.tstop) || opt.tstep >= opt.tstop) result.warnings.push_back("invalid transient parameters");
+        else { char line[160]; std::snprintf(line, sizeof line, ".tran %g %g %g\n", opt.tstep, opt.tstop, std::min(opt.tstep, opt.tstop / 1000)); out += line; }
+    } else if (opt.analysis == SpiceOptions::AC) {
+        if (!spicePositive(opt.fstart) || !spicePositive(opt.fstop) || opt.fstop <= opt.fstart || opt.pointsPerDecade < 1) result.warnings.push_back("invalid AC parameters");
+        else { char line[160]; std::snprintf(line, sizeof line, ".ac dec %d %g %g\n", opt.pointsPerDecade, opt.fstart, opt.fstop); out += line; }
+        if (opt.dcSource.empty()) result.warnings.push_back("AC analysis has no selected source");
+    } else if (opt.analysis == SpiceOptions::DC) {
+        std::string source = opt.dcSource;
+        if (source.empty()) source = "battery";
+        std::string sourceId = clean(source);
+        bool found = false;
+        for (const PartInst& part : doc.parts) if (part.def && part.def->sim == "battery" && (source == part.label || source == label(part) || source == "battery")) { sourceId = label(part); found = true; break; }
+        if (!found && !opt.dcSource.empty()) result.warnings.push_back("DC source not found: " + opt.dcSource);
+        if (spicePositive(opt.dcStep) && opt.dcStop >= opt.dcStart && found) { char line[160]; std::snprintf(line, sizeof line, ".dc V%s %g %g %g\n", sourceId.c_str(), opt.dcStart, opt.dcStop, opt.dcStep); out += line; }
+        else if (!found || !spicePositive(opt.dcStep)) result.warnings.push_back("invalid DC parameters");
+    } else out += ".op\n";
+    out += ".end\n";
+    result.text = out;
+    return result;
+}
+
+std::string exportSpice(const Document& doc, const Connectivity& conn) { return buildSpice(doc, conn, SpiceOptions{}).text; }
+std::string exportSpice(const Document& doc, const Connectivity& conn, const SpiceOptions& options) { return buildSpice(doc, conn, options).text; }

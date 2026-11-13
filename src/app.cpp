@@ -1,4 +1,5 @@
 #include "app.h"
+#include "colorcode.h"
 #include "i18n.h"
 #include "logo.h"
 #include "partmodels.h"
@@ -342,7 +343,7 @@ void App::drawStartScreen() {
     g.fillRect(full, th.bg);
 
     float cw = std::min(540 * s, full.w - 40 * s);
-    float ch = std::min(322 * s, full.h - 40 * s);
+    float ch = std::min((autosaveAvailable ? 428.f : 388.f) * s, full.h - 40 * s);
     Rect card(full.center().x - cw / 2, full.center().y - ch / 2, cw, ch);
     g.fillRoundRect(Rect(card.x + 2 * s, card.y + 4 * s, card.w, card.h), 18 * s, rgba(0, 0, 0, 26));
     g.fillRoundRect(card, 18 * s, th.panel);
@@ -365,8 +366,23 @@ void App::drawStartScreen() {
             if (!restoreAutosave()) ui.toast(tr("welcome.restore_failed"));
         }
     }
+    // Tools: small utilities that need no project (the same list as the top bar's Tools menu)
+    float toolsY = (autosaveAvailable ? nw.b() + 10 * s + 30 * s : nw.b()) + 18 * s;
+    if (toolsY + 60 * s < card.b()) {
+        g.text({card.x + pad, toolsY + 8 * s}, tr("welcome.tools"), 12 * s, th.textDim, 0);
+        float bx = card.x + pad, by = toolsY + 22 * s;
+        for (auto& t : toolList()) {
+            std::string name = tr(std::string("tool.") + t.id + ".name");
+     float bw = g.textWidth(name, 14 * s) + 52 * s;
+     Rect tb(bx, by, std::min(bw, card.r() - pad - bx), 36 * s);
+     if (ui.button(std::string("w-tool-") + t.id, tb, "", BTN_NORMAL)) (this->*t.open)();
+     ui.drawIcon(t.icon, Rect(tb.x + 10 * s, tb.center().y - 9 * s, 18 * s, 18 * s), th.text);
+     g.text({tb.x + 36 * s, tb.center().y}, name, 14 * s, th.text, 0);
+     bx += tb.w + 8 * s;
+        }
+    }
     float hintY = card.b() - 22 * s;
-    if (hintY > nw.b() + 14 * s) g.text({card.center().x, hintY}, tr("welcome.hint"), 11.5f * s, th.textDim, 1);
+    if (hintY > nw.b() + 14 * s + 80 * s) g.text({card.center().x, hintY}, tr("welcome.hint"), 11.5f * s, th.textDim, 1);
 }
 
 static bool endsWith(const std::string& s, const std::string& suf) {
@@ -1177,12 +1193,28 @@ void App::setImageRotation(const std::set<int>& ids, float degrees) {
 }
 
 void App::setPartProp(int partId, const std::string& key, const std::string& value) {
+    setPartProps(partId, Props{{key, value}});
+}
+
+void App::setPartProps(int partId, const Props& values) {
     PartInst* p = doc.part(partId);
-    if (!p || p->prop(key) == value) return;
+    if (!p) return;
+    Props wanted = values;
+    // "4k7" and "R47" are resistances, not "4 kilo" and "R47": store the canonical text
+    // so the simulator, the BOM and the printed marking all read the same number.
+    auto r = wanted.find("resistance");
+    if (r != wanted.end() && p->type == "resistor") {
+ double ohms = cc::parseResistance(r->second, -1);
+        if (ohms >= 0) r->second = cc::formatOhms(ohms);
+    }
+    bool differs = false;
+    for (auto& kv : wanted) differs = differs || p->prop(kv.first) != kv.second;
+    if (!differs) return;
     checkpoint();
-    p->props[key] = value;
+    Props before = p->props;
+    for (auto& kv : wanted) p->props[kv.first] = kv.second;
     p->refresh();
-    if (!p->def) { p->props.erase(key); p->refresh(); }
+    if (!p->def) { p->props = before; p->refresh(); }
     doc.syncWireEnds();
     changed();
 }

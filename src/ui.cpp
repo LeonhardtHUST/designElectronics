@@ -994,6 +994,11 @@ void UI::drawIcon(const std::string& n, Rect r, uint32_t c) {
         g->fillCircle(P(8.5f, 9.5f), 1.7f * u, c);
         PL({{4.5f, 17}, {9.5f, 12}, {13, 15.5f}, {15.5f, 13}, {19.5f, 17}});
     }
+    else if (n == "palette") {  // a resistor with three bands
+        g->strokeRoundRect(Rect(P(6, 8).x, P(6, 8).y, 12 * u, 8 * u), 3 * u, w, c);
+        L(2, 12, 6, 12); L(18, 12, 22, 12);
+        L(9.5f, 8, 9.5f, 16); L(12, 8, 12, 16); L(14.5f, 8, 14.5f, 16);
+    }
     else if (n == "copy") { g->strokeRoundRect(Rect(P(8, 8).x, P(8, 8).y, 12 * u, 12 * u), 2 * u, w, c); PL({{16, 4}, {4, 4}, {4, 16}}); }
     else if (n == "help") { g->strokeCircle(P(12, 12), 9 * u, w, c); A(12, 9.5f, 3, 180, 400); L(12, 13, 12, 14.5f); g->fillCircle(P(12, 17.5f), 1.3f * u, c); }
     else if (n == "bolt") { g->fillConvex({P(13, 2), P(5, 14), P(11, 14)}, c); g->fillConvex({P(11, 22), P(19, 10), P(13, 10)}, c); g->fillConvex({P(13, 2), P(11, 14), P(13, 10)}, c); g->fillConvex({P(11, 14), P(13, 10), P(11, 22)}, c); }

@@ -117,6 +117,14 @@ Built in C++17 with **SDL3** and SDL3_ttf. No other dependencies.
 | **AI assistants (MCP)** | Run `designElectronics --mcp` and Claude, Cursor or any MCP client can design for you: search parts, add and wire them, plug them into breadboards, simulate, autoroute, run DRC and export Gerbers. Works offline over stdio. See [docs/MCP.md](docs/MCP.md). |
 | **Desktop niceties** | Menus, shortcuts, tooltips, trackpad pinch/scroll, drag-and-drop of `.dez` files onto the window, file associations (macOS, Linux). |
 
+## What's new in 0.8
+
+- Optional desktop ngspice precision analysis with `.tran`, `.ac` and `.dc` CLI modes; the built-in real-time simulator remains the default.
+- Expanded SPICE netlist export, runtime library loading, CSV output and cross-check tooling.
+- Colour-code and component-marking tools for resistors and capacitors.
+
+See [docs/NGSPICE.md](docs/NGSPICE.md) for ngspice setup and limitations.
+
 ## Project layout
 
 ```
