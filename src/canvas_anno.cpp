@@ -122,6 +122,10 @@ void App::setTool(CanvasTool t) {
     if (tool == t) return;
     tool = t;
     annoDrawing = false;
+    schematicWireStart = {};
+    schematicWireTarget = {};
+    canvasOwnsPointer = false;
+    spaceRotatePending = false;
     drag = DRAG_NONE;
     dragAnno = -1;
     dragAnnoHandle = -1;
@@ -147,8 +151,49 @@ void App::cycleShapeTool() {
 
 void App::cancelAnnoTool() {
     annoDrawing = false;
+    schematicWireStart = {};
+    schematicWireTarget = {};
+    canvasOwnsPointer = false;
+    spaceRotatePending = false;
     tool = TOOL_SELECT;
     drag = DRAG_NONE;
+}
+
+Vec2 App::schematicWirePoint(Vec2 screen, WireEnd& end) {
+    end = {};
+    int part = -1, pin = -1;
+    if (pinAt(screen, part, pin, -1, -1)) {
+        end = {part, pin};
+        return doc.part(part)->pinPos(pin, view);
+    }
+    Vec2 point = toWorld(screen);
+    return snapToGrid ? snapv(point, gridSize(view) / 2) : point;
+}
+
+bool App::commitSchematicWire() {
+    if (readOnly || view != SCH || tool != TOOL_WIRE || !annoDrawing || dist(annoStart, annoNow) < 0.01f) return false;
+    Wire wire;
+    wire.view = SCH;
+    wire.pts = {annoStart, annoNow};
+    wire.ends[0] = schematicWireStart;
+    wire.ends[1] = schematicWireTarget;
+    wire.layer = activeLayer;
+    wire.width = traceWidthMem[PCB] > 0 ? traceWidthMem[PCB] : doc.rules.traceWidth;
+    wire.color = wireColorMem[SCH];
+    checkpoint();
+    wire.id = doc.newId();
+    doc.wires.push_back(wire);
+    if (autoTidy && wire.ends[0].attached() && wire.ends[1].attached()) tidyWire(doc, wire.id);
+    selParts.clear();
+    selNotes.clear();
+    selAnnos.clear();
+    selWires = {wire.id};
+    annoDrawing = false;
+    schematicWireStart = {};
+    schematicWireTarget = {};
+    canvasOwnsPointer = false;
+    changed();
+    return true;
 }
 
 // Turns a finished drag into an annotation. Only one undo step per shape: the
@@ -198,13 +243,37 @@ void App::createAnnoFromDrag(CanvasTool t, Vec2 a, Vec2 b) {
 // Pointer input while a tool is active. Returns true when the tool handled this
 // frame, so the selection code below it is skipped entirely.
 bool App::annoToolInput() {
-    if (tool == TOOL_SELECT || readOnly) return false;
+    if (tool == TOOL_SELECT || readOnly || ui.editingText() || ui.blocking()) return false;
     // A shape grabbed with a tool is run by canvas.cpp's DRAG_ANNO code — move,
     // resize, and the commit on release. Hand the pointer back to it until then.
     if (drag == DRAG_ANNO) return false;
     Vec2 m = in.mouse;
     bool overCanvas = rCanvas.contains(m) && !ui.overBlocking(m) &&
                       !(compact && (drawerParts || drawerInspector || drawerLayers || drawerAI) && rRight.contains(m));
+
+    if (tool == TOOL_WIRE && view == SCH) {
+        overCanvas = overCanvas && !(simOn && simNotesRect.contains(m));
+        if ((in.rightPressed && overCanvas) || in.key(SDLK_ESCAPE) || in.key(SDLK_RETURN) || in.key(SDLK_KP_ENTER)) {
+            cancelAnnoTool();
+            in.rightPressed = false;
+            return true;
+        }
+        if (spaceDown || drag == DRAG_PAN) return false;
+        if (overCanvas) {
+            annoNow = schematicWirePoint(m, schematicWireTarget);
+            if (in.pressed) {
+                if (!annoDrawing) {
+                    annoStart = annoNow;
+                    schematicWireStart = schematicWireTarget;
+                    annoDrawing = true;
+                } else {
+                    commitSchematicWire();
+                }
+            }
+        }
+        canvasOwnsPointer = false;
+        return overCanvas || annoDrawing;
+    }
 
     // Finish the tool: a right click, Return, or a double-click on the canvas.
     // Esc is handled in handleShortcuts(), where the keyboard lives.
@@ -387,6 +456,10 @@ void App::drawAnnoPreview(const Camera& c, float zoom, float uiScale) {
     if (tool == TOOL_WIRE) {
         Vec2 a = c.pan + annoStart * zoom, b = c.pan + annoNow * zoom;
         g.dashedLine(a, b, std::max(1.5f * uiScale, 1.f), 8 * uiScale, 6 * uiScale, rgba(28, 116, 222, 200));
+        if (view == SCH) {
+            if (schematicWireStart.attached()) g.strokeCircle(a, 7 * uiScale, 2 * uiScale, rgba(28, 116, 222));
+            if (schematicWireTarget.attached()) g.strokeCircle(b, 7 * uiScale, 2 * uiScale, rgba(28, 116, 222));
+        }
         return;
     }
     if (tool == TOOL_TEXT) {
@@ -416,7 +489,7 @@ void App::drawAnnoPreview(const Camera& c, float zoom, float uiScale) {
 void App::drawToolHint() {
     if (tool == TOOL_SELECT || readOnly) return;
     float s = ui.s;
-    std::string hint = tr(tool == TOOL_TEXT ? "tool.hint.text" : tool == TOOL_WIRE ? "tool.hint.wire" : "tool.hint.shape");
+    std::string hint = tr(tool == TOOL_TEXT ? "tool.hint.text" : tool == TOOL_WIRE ? (view == SCH ? "tool.hint.wire.sch" : "tool.hint.wire") : "tool.hint.shape");
     // Centre it in the part of the canvas that is not behind a drawer.
     Rect visible = rCanvas;
     if (compact && (drawerParts || drawerInspector || drawerLayers || drawerAI) && rRight.x > rCanvas.x)

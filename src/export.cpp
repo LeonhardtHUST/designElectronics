@@ -498,8 +498,7 @@ std::string exportSvg(const Document& doc, const Connectivity& conn, int view) {
             for (auto& pr : p.def->gfx[view]) svgPrim(o, pr, p.place[view], view != SCH);
             if (view == SCH && !p.def->isBreadboard && p.def->netProp.empty()) {
                 Rect r = p.worldBounds(SCH);
-                std::string lbl = p.label;
-                if (!p.def->valueProp.empty()) lbl += "  " + p.prop(p.def->valueProp);
+                std::string lbl = p.schematicLabel();
                 snprintf(b, sizeof b, "<text x=\"%.1f\" y=\"%.1f\" font-family=\"Sarasa Gothic SC, Noto Sans SC, Microsoft YaHei, PingFang SC, sans-serif\" font-size=\"55\" fill=\"#303030\">", r.x, r.y - 40);
                 o += b;
                 o += esc(lbl) + "</text>\n";

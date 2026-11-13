@@ -55,6 +55,15 @@ std::string PartInst::pinAddress(int index) const {
     return label + "." + (pin.name.empty() ? pin.id : pin.name);
 }
 
+std::string PartInst::schematicLabel() const {
+    if (!def || def->valueProp.empty() || def->valueProp == "pins") return label;
+    std::string value = prop(def->valueProp);
+    if (value.empty()) return label;
+    for (const auto& primitive : def->gfx[SCH])
+        if (primitive.kind == Prim::TEXT && primitive.text == value) return label;
+    return label + "  " + value;
+}
+
 void Document::clear() {
     uid.clear();
     git = GitLink();

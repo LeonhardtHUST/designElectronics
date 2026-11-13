@@ -14,7 +14,7 @@
 constexpr const char* kFileFormat = "designElectronics";
 constexpr int kFileVersion = 3;  // 2 adds "annos"; 3 adds part "group" (hierarchy levels)
 constexpr const char* kFileExt = ".dez";
-constexpr const char* kAppVersion = "0.8.2";
+constexpr const char* kAppVersion = "0.8.3";
 
 struct PartInst {
     int id = 0;
@@ -43,6 +43,7 @@ struct PartInst {
         return v.empty() ? label : label + "  " + v;
     }
     std::string pinAddress(int pin) const;
+    std::string schematicLabel() const;
     bool inView(int v) const { return def && def->inView(v); }
     Vec2 pinPos(int pin, int view) const { return place[view].apply(def->pins[pin].pos[view]); }
     Rect worldBounds(int view) const { return place[view].applyRect(def->bounds[view]); }

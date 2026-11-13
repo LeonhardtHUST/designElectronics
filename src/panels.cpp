@@ -184,8 +184,6 @@ std::vector<MenuItem> App::routingMenu() {
         sub(tr("menu.routing.active_layer"), {item(tr("menu.routing.layer.top"), [this]() { activeLayer = TOP; }, "", true, activeLayer == TOP),
                                               item(tr("menu.routing.layer.bottom"), [this]() { activeLayer = BOTTOM; }, "", true, activeLayer == BOTTOM)}),
         sub(tr("menu.routing.trace_width"), widths),
-        MenuItem::sep(),
-        item(tr(simOn ? "menu.routing.stop_sim" : "menu.routing.start_sim"), [this]() { toggleSim(); }),
     };
 }
 

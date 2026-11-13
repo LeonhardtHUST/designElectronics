@@ -104,6 +104,35 @@ std::vector<std::string> wrapText(Gfx& g, const std::string& t, float px, float 
 }
 
 
+TooltipLayout layoutTooltip(Gfx& g, const std::string& text, Vec2 pointer, Rect viewport, float scale) {
+    TooltipLayout result;
+    if (text.empty() || viewport.w <= 0 || viewport.h <= 0) return result;
+    scale = std::isfinite(scale) && scale > 0 ? scale : 1;
+    float margin = std::min(8 * scale, std::min(viewport.w, viewport.h) * .05f);
+    float availableWidth = viewport.w - 2 * margin;
+    float availableHeight = viewport.h - 2 * margin;
+    result.fontSize = 13 * scale;
+    result.lineHeight = result.fontSize * 1.4f;
+    result.padding = std::min(10 * scale, std::min(availableWidth, availableHeight) * .1f);
+    float textWidth = std::max(1.f, std::min(420 * scale, availableWidth) - 2 * result.padding);
+    result.lines = wrapText(g, text, result.fontSize, textWidth);
+    int maxLines = std::max(1, (int)std::floor((availableHeight - 2 * result.padding) / result.lineHeight));
+    if (result.lines.size() > (size_t)maxLines) {
+        result.lines.resize((size_t)maxLines);
+        result.lines.back() = g.ellipsize(result.lines.back() + "…", result.fontSize, textWidth);
+    }
+    float width = 0;
+    for (const auto& line : result.lines) width = std::max(width, g.textWidth(line, result.fontSize));
+    width = std::min(availableWidth, width + 2 * result.padding);
+    float height = std::min(availableHeight, result.lines.size() * result.lineHeight + 2 * result.padding);
+    float left = std::clamp(pointer.x + 12 * scale, viewport.x + margin, viewport.r() - margin - width);
+    float top = pointer.y + 22 * scale;
+    if (top + height > viewport.b() - margin) top = pointer.y - 12 * scale - height;
+    top = std::clamp(top, viewport.y + margin, viewport.b() - margin - height);
+    result.bounds = Rect(left, top, width, height);
+    return result;
+}
+
 void UI::begin() {
     tip_.clear();
     if (focus_ && in->pressed && !clipStack_.contains(in->mouse)) {
@@ -903,14 +932,13 @@ void UI::end() {
             g->text({r.center().x, r.y + 10 * s + px * 1.35f * ((float)i + 0.5f)}, lines[i], px, rgba(255, 255, 255), 1);
     }
     if (!tip_.empty() && SDL_GetTicks() - tipStart_ > 600 && menus_.empty() && dialogs_.empty()) {
-        float px = 13 * s;
-        float w = g->textWidth(tip_, px) + 16 * s;
-        float x = std::min(in->mouse.x + 12 * s, (float)ww - w - 4 * s);
-        float y = in->mouse.y + 22 * s;
-        if (y + 28 * s > wh) y = in->mouse.y - 34 * s;
-        Rect r(x, y, w, 26 * s);
-        g->fillRoundRect(r, 5 * s, rgba(40, 40, 46, 240));
-        g->text({r.x + 8 * s, r.center().y}, tip_, px, rgba(255, 255, 255), 0);
+        TooltipLayout tip = layoutTooltip(*g, tip_, in->mouse, Rect(0, 0, (float)ww, (float)wh), s);
+        g->fillRoundRect(tip.bounds, 6 * s, rgba(40, 40, 46, 240));
+        g->setClip(&tip.bounds);
+        for (size_t line = 0; line < tip.lines.size(); ++line)
+            g->text({tip.bounds.x + tip.padding, tip.bounds.y + tip.padding + ((float)line + .5f) * tip.lineHeight},
+                    tip.lines[line], tip.fontSize, rgba(255, 255, 255), 0);
+        g->setClip(nullptr);
     }
     if (tip_.empty()) tipId_.clear();
     if (in->released) pressedId_ = 0;

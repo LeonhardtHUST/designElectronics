@@ -227,3 +227,10 @@ private:
 };
 
 std::vector<std::string> wrapText(Gfx& g, const std::string& t, float px, float width, FontFace face = FONT_UI);
+
+struct TooltipLayout {
+    Rect bounds;
+    std::vector<std::string> lines;
+    float fontSize = 0, lineHeight = 0, padding = 0;
+};
+TooltipLayout layoutTooltip(Gfx& g, const std::string& text, Vec2 pointer, Rect viewport, float scale);

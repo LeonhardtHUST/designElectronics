@@ -1504,8 +1504,7 @@ void App::drawCanvas(int v, const Camera& c, Rect vp, bool exporting) {
             }
             if (!isSubstrate(p) && v == SCH && showPartLabels && (exporting || layerShown(SCH, LY_LABELS)) && p.def->netProp.empty()) {
                 Rect b = p.worldBounds(SCH);
-                std::string lbl = p.label;
-                if (!p.def->valueProp.empty() && p.def->valueProp != "pins") lbl += "  " + p.prop(p.def->valueProp);
+                std::string lbl = p.schematicLabel();
                 g.text(S({b.x, b.y - 45}), lbl, 55 * z, rgba(40, 40, 120), 0);
             }
             // breadboard holes in use light up green

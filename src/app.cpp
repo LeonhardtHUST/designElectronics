@@ -738,12 +738,12 @@ void App::loadExample(size_t i) {
 
 void App::showAbout() {
     ui.scrollTo("about-body", 0);
-    ui.openSheet("about", "designElectronics " + std::string(kAppVersion), 700, 680, [this](Rect body) {
+    ui.openSheet("about", "designElectronics " + std::string(kAppVersion), 640, 420, [this](Rect body) {
         float scale = ui.s;
         float fontSize = 14 * scale;
         float gap = 12 * scale;
         float buttonHeight = 38 * scale;
-        const char* keys[] = {"about.fork", "about.copyright", "about.p1", "about.p2", "about.p3", "about.p4", "about.p5", "about.p6"};
+        const char* keys[] = {"about.p1", "about.fork", "about.copyright", "about.p4", "about.p5"};
         float contentHeight = 3 * (buttonHeight + gap);
         for (const char* key : keys)
             contentHeight += ui.wrappedText(Rect(body.x, 0, body.w - 12 * scale, 0), tr(key), ui.th.text, fontSize, false) + gap;
@@ -781,6 +781,7 @@ std::vector<std::string> App::shortcutLines() const {
     lines.push_back(tr("shortcut.12"));
     lines.push_back(tr("shortcut.13"));
     lines.push_back(tr("shortcut.15"));  // where all of this can be changed
+    lines.push_back(tr("shortcut.schematic"));
     return lines;
 }
 
@@ -802,6 +803,14 @@ void App::loadBindings() {
             continue;
         }
         binds.chord[i] = c;
+    }
+    if (settingsGet("shortcut.tool_wire", "\x01") == "\x01") {
+        for (int i = 0; i < kActionCount; i++) {
+            if (i != (int)Action::ToolWire && binds.chord[i] == binds.chord[(int)Action::ToolWire]) {
+                binds.chord[(int)Action::ToolWire] = {};
+                break;
+            }
+        }
     }
     static const char* slots[kMouseSlots] = {"mouse.middle", "mouse.right", "mouse.space_left"};
     for (int i = 0; i < kMouseSlots; i++) {
@@ -827,6 +836,8 @@ void App::applyBinding(Action a, const KeyChord& c, int conflictAction) {
 
 // Runs one table action. An action that does not apply is a no-op.
 void App::runAction(Action a) {
+    if (readOnly && a != Action::Copy && a != Action::ViewBB && a != Action::ViewSCH && a != Action::ViewPCB) return;
+    if (view == SCH && tool == TOOL_WIRE && annoDrawing && a != Action::ToolWire) cancelAnnoTool();
     switch (a) {
         case Action::Undo: undo(); break;
         case Action::Redo: redo(); break;
@@ -1316,21 +1327,50 @@ void App::toggleSim() {
 
 void App::setView(int v) {
     if (v == view) return;
+    cancelAnnoTool();
     view = v;
     ui.clearFocus();
     ui.closeMenus();
 }
 
 void App::handleShortcuts() {
+    if (readOnly || startScreen || ui.editingText() || ui.blocking()) {
+        spaceRotatePending = false;
+        return;
+    }
+    if (in.pressed || in.down || in.middleDown || in.rightDown || drag != DRAG_NONE) spaceRotatePending = false;
+    if (spaceRotatePending && !spaceDown) {
+        spaceRotatePending = false;
+        if (view == SCH && tool == TOOL_SELECT) rotateSelection(spaceRotateDirection);
+    }
     // The rebindable table comes first, and an action it handles ends the frame's
     // keyboard work. Unbinding an action therefore really disables it: the keys that
     // belong to the table are gone from the fallback switch below.
     int act = actionFor(binds, in);
     if (act >= 0) {
+        spaceRotatePending = false;
         runAction((Action)act);
         return;
     }
     bool c = in.cmd(), sh = in.shift();
+    if (view == SCH && tool == TOOL_SELECT && !selParts.empty() && in.key(SDLK_SPACE) &&
+        !c && !(in.mods & SDL_KMOD_ALT) && !in.down && !in.pressed && drag == DRAG_NONE &&
+        binds.chord[(int)Action::Rotate] == defaultBindings().chord[(int)Action::Rotate]) {
+        bool canRotate = false;
+        for (int id : selParts) {
+            const PartInst* part = doc.part(id);
+            if (part && part->inView(view) && !part->def->isBoard && !part->locked) canRotate = true;
+        }
+        if (canRotate) {
+            spaceRotatePending = true;
+            spaceRotateDirection = sh ? -1 : 1;
+            if (!spaceDown) {
+                spaceRotatePending = false;
+                rotateSelection(spaceRotateDirection);
+            }
+        }
+        return;
+    }
     for (auto k : in.keys) {
         if (c) {
             switch (k) {
@@ -1380,6 +1420,8 @@ void App::handleShortcuts() {
 // ---------------------------------------------------------------------------
 
 SDL_AppResult App::event(const SDL_Event& e) {
+    if (ui.editingText() || ui.blocking() || readOnly || e.type == SDL_EVENT_WINDOW_FOCUS_LOST ||
+        e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_FINGER_DOWN) spaceRotatePending = false;
     float density = win ? SDL_GetWindowPixelDensity(win) : 1.f;
     switch (e.type) {
         case SDL_EVENT_QUIT:
@@ -1475,7 +1517,7 @@ SDL_AppResult App::event(const SDL_Event& e) {
             in.text += e.text.text;
             break;
         case SDL_EVENT_KEY_DOWN:
-            in.keys.push_back(e.key.key);
+            if (e.key.key != SDLK_SPACE || !e.key.repeat) in.keys.push_back(e.key.key);
             in.mods = e.key.mod;
             if (e.key.key == SDLK_SPACE && !ui.editingText()) spaceDown = true;
             if (e.key.key == SDLK_AC_BACK) {  // Android back button

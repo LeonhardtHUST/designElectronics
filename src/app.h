@@ -109,6 +109,9 @@ public:
     // drag is in progress (a click without a drag still makes a usable shape).
     bool annoDrawing = false;
     Vec2 annoStart, annoNow;
+    WireEnd schematicWireStart, schematicWireTarget;
+    bool spaceRotatePending = false;
+    int spaceRotateDirection = 1;
     // Colour and trace width remembered per view for new wires (persisted in config.toml).
     uint32_t wireColorMem[NUM_VIEWS] = {rgba(65, 140, 225), rgba(65, 140, 225), rgba(65, 140, 225)};
     float traceWidthMem[NUM_VIEWS] = {0, 0, 0};
@@ -303,6 +306,8 @@ public:
     void retidyAround(const std::set<int>& parts, const std::set<int>& skipWires = {});
     void runDrc();
     void toggleSim();
+    void restartSimulation();
+    void openSimulationDetails();
     void setView(int v);
     void setLanguage(const std::string& code);
     void handleShortcuts();
@@ -406,6 +411,8 @@ public:
     // ---- canvas_anno.cpp: markup tools and the remembered wire colour ----
     void setTool(CanvasTool t);
     void cancelAnnoTool();                       // back to selection, dropping an unfinished shape
+    Vec2 schematicWirePoint(Vec2 screen, WireEnd& end);
+    bool commitSchematicWire();
     bool annoToolInput();                        // true when the tool consumed the pointer
     bool annoToolActive() const { return tool != TOOL_SELECT; }
     void drawAnnoPreview(const Camera& c, float zoom, float uiScale);

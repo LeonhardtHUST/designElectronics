@@ -98,7 +98,7 @@ Bindings defaultBindings() {
     set(Action::ViewSCH, SDLK_2, true);
     set(Action::ViewPCB, SDLK_3, true);
     set(Action::ToolSelect, SDLK_ESCAPE);  // leaves a shape tool, otherwise clears the selection
-    set(Action::ToolWire, 0);
+    set(Action::ToolWire, SDLK_W, false, false, true);
     set(Action::ToolShape, 0);
     set(Action::ToolText, 0);
     set(Action::Save, SDLK_S, true);  // Shift+S saves as, see actionUsesShift

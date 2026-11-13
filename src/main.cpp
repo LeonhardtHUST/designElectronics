@@ -59,6 +59,10 @@ void hitTests(int& failures);
 void configTests(int& failures);
 void partCopyTests(int& failures);
 void licenseTests(int& failures);
+void tooltipTests(int& failures);
+void simulationMenuTests(int& failures);
+void schematicLabelTests(int& failures);
+void schematicWorkflowTests(int& failures);
 void fontSizeTests(int& failures);
 void toolTests(int& failures);
 void keyTests(int& failures);
@@ -1327,6 +1331,217 @@ void imageAnnoTests(int& failures) {
     }
 }
 
+void tooltipTests(int& failures) {
+    printf("Wrapped tooltips\n");
+    Gfx graphics;
+    std::string description;
+    for (int repeat = 0; repeat < 9; ++repeat) description += "GPIO5=BLINK:500 (500 ms), GPIO18=PWM:30 (30%). ";
+    auto wide = layoutTooltip(graphics, description, {2500, 1320}, Rect(0, 0, 2560, 1410), 1.75f);
+    check(wide.bounds.w <= 420 * 1.75f + 1 && wide.lines.size() > 1,
+          "long descriptions use a bounded multi-line tooltip", failures);
+    std::string joined;
+    for (const auto& line : wide.lines) joined += line;
+    check(joined.find("GPIO5=BLINK:500") != std::string::npos && joined.find("GPIO18=PWM:30") != std::string::npos &&
+              joined.find("(30%).") != std::string::npos,
+          "wrapping retains GPIO identifiers, timing and duty values", failures);
+    bool contained = true;
+    for (float scale : {1.f, 1.75f, 2.5f}) {
+        for (Vec2 pointer : {Vec2(0, 0), Vec2(360, 0), Vec2(0, 480), Vec2(360, 480)}) {
+            auto layout = layoutTooltip(graphics, description, pointer, Rect(0, 0, 360, 480), scale);
+            contained = contained && layout.bounds.x >= 0 && layout.bounds.y >= 0 &&
+                        layout.bounds.r() <= 360.1f && layout.bounds.b() <= 480.1f;
+        }
+    }
+    check(contained, "tooltip placement stays inside narrow windows at every corner", failures);
+    auto shortTip = layoutTooltip(graphics, "BB1.T1.j1", {50, 50}, Rect(0, 0, 800, 600), 1);
+    check(shortTip.lines.size() == 1 && shortTip.lines[0] == "BB1.T1.j1",
+          "short tooltips remain compact single-line labels", failures);
+    check(layoutTooltip(graphics, "", {}, Rect(0, 0, 800, 600), 1).lines.empty(),
+          "empty tooltips produce no popup", failures);
+}
+
+void simulationMenuTests(int& failures) {
+    printf("Simulation tools menu\n");
+    App app;
+    app.scratchSession = true;
+    auto findSimulation = [&]() {
+        for (const auto& entry : app.toolsMenu()) if (entry.label == tr("menu.tools.simulation")) return entry;
+        return MenuItem{};
+    };
+    auto simulation = findSimulation();
+    check(simulation.children.size() == 3 && simulation.children[0].label == tr("menu.routing.start_sim"),
+          "Tools groups start, restart and details under Simulation", failures);
+    if (simulation.children.size() != 3) return;
+    check(!simulation.children[1].enabled, "restart is unavailable before simulation starts", failures);
+    simulation.children[0].action();
+    check(app.simOn && findSimulation().children[0].label == tr("menu.routing.stop_sim"),
+          "the Tools start command updates the shared simulation state", failures);
+    std::string saved = app.doc.serialize(true);
+    size_t undoDepth = app.undoStack.size();
+    app.sim.time = 3;
+    app.sim.warnings = {"old warning"};
+    app.simPressed.insert(1);
+    app.simPressedLast.insert(1);
+    app.serialLog[1] = "old serial";
+    app.simNotesOpen = true;
+    app.view = PCB;
+    findSimulation().children[1].action();
+    check(app.simOn && app.view == BB && app.sim.time == 0 && app.sim.warnings.empty() &&
+              app.simPressed.empty() && app.simPressedLast.empty() && app.serialLog.empty() && !app.simNotesOpen,
+          "restart clears transient state and returns PCB simulation to breadboard", failures);
+    check(app.doc.serialize(true) == saved && app.undoStack.size() == undoDepth,
+          "simulation restart does not change the project or undo history", failures);
+    findSimulation().children[2].action();
+    check(app.ui.sheetOpen("simulation-details"), "Tools opens the read-only simulation details sheet", failures);
+    app.ui.closeSheet();
+    findSimulation().children[0].action();
+    check(!app.simOn, "the same Tools command stops an active simulation", failures);
+    app.startScreen = true;
+    simulation = findSimulation();
+    check(!simulation.children[0].enabled && !simulation.children[1].enabled,
+          "start-screen Tools cannot run an unopened circuit", failures);
+    app.startScreen = false;
+    app.readOnly = true;
+    check(!findSimulation().children[0].enabled, "editing-only Tools commands are disabled in read-only views", failures);
+    bool inRouting = false;
+    for (const auto& entry : app.routingMenu())
+        if (entry.label == tr("menu.routing.start_sim") || entry.label == tr("menu.routing.stop_sim")) inRouting = true;
+    check(!inRouting, "Routing no longer contains unrelated simulation commands", failures);
+}
+
+void schematicLabelTests(int& failures) {
+    printf("Schematic model labels\n");
+    Document document;
+    int logic = document.addPart("74hc00", {}, {0, 0}).id;
+    const PartInst* chip = document.part(logic);
+    check(chip->schematicLabel() == chip->label, "a model already printed in the symbol is not repeated above it", failures);
+    int resistor = document.addPart("resistor", {{"resistance", "4.7kΩ"}}, {6000, 0}).id;
+    check(document.part(resistor)->schematicLabel().find("4.7kΩ") != std::string::npos,
+          "passive values remain alongside their schematic references", failures);
+    Connectivity connectivity;
+    connectivity.build(document);
+    std::string svg = exportSvg(document, connectivity, SCH);
+    size_t models = 0, offset = 0;
+    while ((offset = svg.find("74HC00", offset)) != std::string::npos) { ++models; offset += 6; }
+    check(models == 1 && svg.find("4.7kΩ") != std::string::npos,
+          "schematic SVG export also contains each model once and keeps passive values", failures);
+}
+
+void schematicWorkflowTests(int& failures) {
+    printf("Schematic keyboard workflow\n");
+    App app;
+    app.scratchSession = true;
+    app.view = SCH;
+    app.binds = defaultBindings();
+    app.ui.g = &app.g;
+    app.ui.in = &app.in;
+    app.ui.s = 1;
+    app.rCanvas = Rect(-2000, -2000, 20000, 20000);
+    app.cam[SCH].zoom = 1;
+    app.cam[SCH].valid = true;
+    int first = app.doc.addPart("resistor", {}, {1000, 1000}).id;
+    int second = app.doc.addPart("resistor", {}, {4000, 1000}).id;
+    app.in.keys = {SDLK_W};
+    app.in.mods = SDL_KMOD_ALT;
+    app.handleShortcuts();
+    check(app.tool == TOOL_WIRE, "Alt+W selects the configurable schematic wire tool", failures);
+    app.in.endFrame();
+    app.in.mods = 0;
+    Vec2 from = app.toScreen(app.doc.part(first)->pinPos(1, SCH));
+    Vec2 to = app.toScreen(app.doc.part(second)->pinPos(0, SCH));
+    std::string before = app.doc.serialize(true);
+    size_t history = app.undoStack.size();
+    app.in.mouse = from;
+    app.in.pressed = true;
+    app.annoToolInput();
+    app.in.endFrame();
+    app.in.released = true;
+    app.annoToolInput();
+    app.in.endFrame();
+    check(app.annoDrawing && app.doc.wires.empty() && app.undoStack.size() == history && app.doc.serialize(true) == before,
+          "the first wire click creates preview state without editing the project", failures);
+    app.in.mouse = to;
+    app.annoToolInput();
+    check(app.schematicWireTarget.part == second && app.annoNow == app.doc.part(second)->pinPos(0, SCH),
+          "the wire preview snaps exactly to its destination pin", failures);
+    app.in.pressed = true;
+    app.annoToolInput();
+    app.in.endFrame();
+    bool committed = app.doc.wires.size() == 1 && app.undoStack.size() == history + 1;
+    check(committed && app.doc.wires[0].ends[0].part == first && app.doc.wires[0].ends[1].part == second && app.tool == TOOL_WIRE,
+          "the second click creates one attached wire and keeps wire mode active", failures);
+    app.undo();
+    check(app.doc.wires.empty() && app.undoStack.size() == history, "one undo removes the complete click-to-click wire", failures);
+    app.setTool(TOOL_WIRE);
+    before = app.doc.serialize(true);
+    app.in.mouse = from;
+    app.in.pressed = true;
+    app.annoToolInput();
+    app.in.endFrame();
+    app.in.rightPressed = true;
+    app.annoToolInput();
+    app.in.endFrame();
+    check(app.tool == TOOL_SELECT && !app.annoDrawing && app.doc.serialize(true) == before && !app.ui.hasMenu(),
+          "right-click cancels an unfinished wire without edits or a context menu", failures);
+    app.setTool(TOOL_WIRE);
+    app.in.mouse = from;
+    app.in.pressed = true;
+    app.annoToolInput();
+    app.in.endFrame();
+    app.in.keys = {SDLK_ESCAPE};
+    app.handleShortcuts();
+    app.in.endFrame();
+    check(app.tool == TOOL_SELECT && !app.annoDrawing && app.doc.serialize(true) == before,
+          "Escape discards the wire preview without creating undo history", failures);
+    app.selParts = {first};
+    int rotation = app.doc.part(first)->place[SCH].rot;
+    app.in.keys = {SDLK_SPACE};
+    app.spaceDown = true;
+    app.handleShortcuts();
+    app.in.endFrame();
+    check(app.doc.part(first)->place[SCH].rot == rotation, "holding Space does not rotate before a possible pan", failures);
+    app.spaceDown = false;
+    app.handleShortcuts();
+    check(app.doc.part(first)->place[SCH].rot != rotation, "releasing a tapped Space rotates the selected schematic part", failures);
+    int afterRotation = app.doc.part(first)->place[SCH].rot;
+    app.in.keys = {SDLK_SPACE};
+    app.spaceDown = true;
+    app.handleShortcuts();
+    app.in.endFrame();
+    app.in.down = true;
+    app.handleShortcuts();
+    app.in.down = false;
+    app.spaceDown = false;
+    app.handleShortcuts();
+    check(app.doc.part(first)->place[SCH].rot == afterRotation, "Space plus pointer dragging never rotates the selected part", failures);
+    app.in.endFrame();
+    app.binds.chord[(int)Action::Rotate] = {};
+    app.in.keys = {SDLK_SPACE};
+    app.handleShortcuts();
+    check(app.doc.part(first)->place[SCH].rot == afterRotation, "unbinding rotation also disables the Space alias", failures);
+    app.in.endFrame();
+    app.binds = defaultBindings();
+    app.ui.focusField("workflow-test-field", false);
+    std::string fieldText = "";
+    app.ui.textField("workflow-test-field", Rect(0, 0, 200, 30), fieldText);
+    app.in.keys = {SDLK_W};
+    app.in.mods = SDL_KMOD_ALT;
+    app.handleShortcuts();
+    check(app.tool == TOOL_SELECT, "text field focus prevents schematic shortcuts from firing", failures);
+    app.ui.clearFocus();
+    app.ui.cancelPendingFocus();
+    app.in.endFrame();
+    app.in.mods = 0;
+    app.setTool(TOOL_WIRE);
+    app.in.mouse = from;
+    app.in.pressed = true;
+    app.annoToolInput();
+    app.in.endFrame();
+    app.setView(BB);
+    check(app.tool == TOOL_SELECT && !app.annoDrawing && !app.schematicWireStart.attached(),
+          "changing views clears schematic wire preview state", failures);
+}
+
 void licenseTests(int& failures) {
     printf("Open-source licenses and fork attribution\n");
     auto documents = licenseDocuments();
@@ -1490,7 +1705,14 @@ void colorCodeTests(int& failures) {
     }
     {
  App app;
-        check(!App::toolList().empty() && app.toolsMenu().size() == App::toolList().size(), "the tools menu lists every tool", failures);
+        auto tools = app.toolsMenu();
+        bool everyTool = !App::toolList().empty();
+        for (const auto& tool : App::toolList()) {
+            bool found = false;
+            for (const auto& entry : tools) if (entry.label == tr(std::string("tool.") + tool.id + ".name")) found = true;
+            everyTool = everyTool && found;
+        }
+        check(everyTool, "the tools menu retains every standalone tool", failures);
         check(i18n::exists("tool.colorcode.name") && i18n::exists("menu.title.tools") && i18n::exists("welcome.tools"), "tool strings are translated", failures);
  i18n::setLang("zh-CN");
  check(tr("tool.colorcode.name") != "tool.colorcode.name" && tr("cc.color.red") == "红", "tool strings exist in Chinese", failures);
@@ -1650,6 +1872,10 @@ int selftest() {
     inlineAnnoTests(failures);
     textModeTests(failures);
     menuTests(failures);
+    tooltipTests(failures);
+    simulationMenuTests(failures);
+    schematicLabelTests(failures);
+    schematicWorkflowTests(failures);
     configTests(failures);
     fontSizeTests(failures);
     toolTests(failures);
@@ -2973,7 +3199,7 @@ void keyTests(int& failures) {
         for (auto& l : lines)
             if (l.find(tr("shortcut.14")) != std::string::npos) bendLine = true;
         printf("  shortcuts dialog: %zu lines, undo line %s\n", lines.size(), lines.empty() ? "-" : lines[0].c_str());
-        check(lines.size() == (size_t)kActionCount + 7 && undoLine && bendLine,
+        check(lines.size() == (size_t)kActionCount + 8 && undoLine && bendLine,
               "the shortcuts dialog lists every action from the table, including the bend-point tip", failures);
         k.binds.chord[(int)Action::AddBend] = KeyChord{SDLK_LEFT, false, false, true};
         std::vector<std::string> after = k.shortcutLines();
@@ -3325,6 +3551,7 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
         else if (g_shot.sheet == "settings") g_app->openSettingsSheet();
         else if (g_shot.sheet == "about") g_app->showAbout();
         else if (g_shot.sheet == "licenses") openSourceLicenses(g_app->ui);
+        else if (g_shot.sheet == "simulation") g_app->openSimulationDetails();
         else if (g_shot.sheet == "upload")
             for (auto& p : g_app->doc.parts)
                 if (p.def->sim == "board") { g_app->openUploadSheet(p.id); break; }
@@ -3381,7 +3608,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             if (g_shot.drawer == "layers-tab") app->rightTab = 1;
             if (g_shot.drawer == "ai-tab") app->rightTab = 2;
             if (!g_shot.menu.empty()) {
-                std::vector<MenuItem> m = g_shot.menu == "file" ? app->fileMenu() : g_shot.menu == "view" ? app->viewMenu() : app->allMenus();
+                std::vector<MenuItem> m = g_shot.menu == "file" ? app->fileMenu() : g_shot.menu == "view" ? app->viewMenu() : g_shot.menu == "tools" ? app->toolsMenu() : app->allMenus();
                 app->ui.openMenu(Rect(60 * app->ui.s, 8 * app->ui.s, 40 * app->ui.s, 36 * app->ui.s), m);
             }
         }
@@ -3397,9 +3624,9 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                 e.type = SDL_EVENT_MOUSE_MOTION;
                 e.motion.windowID = wid; e.motion.x = ev.x; e.motion.y = ev.y;
                 e.motion.state = SDL_BUTTON_LMASK;
-            } else if (ev.type == 'k') {
-                e.type = SDL_EVENT_KEY_DOWN;
-                e.key.windowID = wid; e.key.key = (SDL_Keycode)ev.x; e.key.mod = (SDL_Keymod)ev.y; e.key.down = true;
+            } else if (ev.type == 'k' || ev.type == 'K') {
+                e.type = ev.type == 'k' ? SDL_EVENT_KEY_DOWN : SDL_EVENT_KEY_UP;
+                e.key.windowID = wid; e.key.key = (SDL_Keycode)ev.x; e.key.mod = (SDL_Keymod)ev.y; e.key.down = ev.type == 'k';
             } else if (ev.type == 'w') {
                 // Wheel notches in y, at wherever the pointer last was.
                 e.type = SDL_EVENT_MOUSE_WHEEL;

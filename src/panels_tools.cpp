@@ -19,6 +19,13 @@ const std::vector<App::ToolEntry>& App::toolList() {
 }
 
 std::vector<MenuItem> App::toolsMenu() {
+    auto command = [](const std::string& label, std::function<void()> action, bool enabled = true) {
+        MenuItem entry;
+        entry.label = label;
+        entry.action = std::move(action);
+        entry.enabled = enabled;
+        return entry;
+    };
     std::vector<MenuItem> m;
     for (auto& t : toolList()) {
         MenuItem it;
@@ -27,9 +34,63 @@ std::vector<MenuItem> App::toolsMenu() {
         it.action = [this, open]() { (this->*open)(); };
  m.push_back(it);
     }
+    m.push_back(MenuItem::sep());
+    MenuItem simulation;
+    simulation.label = tr("menu.tools.simulation");
+    simulation.children = {
+        command(tr(simOn ? "menu.routing.stop_sim" : "menu.routing.start_sim"), [this]() { toggleSim(); }, !startScreen && !readOnly),
+        command(tr("menu.tools.restart_sim"), [this]() { restartSimulation(); }, !startScreen && !readOnly && simOn),
+        command(tr("menu.tools.simulation_details"), [this]() { openSimulationDetails(); }),
+    };
+    m.push_back(std::move(simulation));
     return m;
 }
 
+void App::restartSimulation() {
+    if (startScreen || readOnly || !simOn) return;
+    bool wasRunning = simOn;
+    simulator.reset();
+    sim = SimResult();
+    simRev = -1;
+    lastSimTicks = 0;
+    simPressed.clear();
+    simPressedLast.clear();
+    serialLog.clear();
+    serialSend.clear();
+    simNotesOpen = false;
+    if (wasRunning && view == PCB) setView(BB);
+    ui.toast(tr("toast.sim_restarted"));
+}
+
+void App::openSimulationDetails() {
+    ui.scrollTo("simulation-details-body", 0);
+    ui.openSheet("simulation-details", tr("menu.tools.simulation_details"), 640, 560, [this](Rect body) {
+        float scale = ui.s;
+        float width = std::max(1.f, body.w - 14 * scale);
+        std::vector<std::pair<std::string, uint32_t>> rows;
+        rows.emplace_back(tr("sim.details.status") + ": " + tr(simOn ? "sim.details.running" : "sim.details.idle"), ui.th.text);
+        if (!sim.ran && sim.time <= 0) {
+            rows.emplace_back(tr("sim.details.empty"), ui.th.textDim);
+        } else {
+            rows.emplace_back(trf("sim.details.time", {num(sim.time, 3)}), ui.th.text);
+            if (!sim.message.empty() && sim.message != tr("sim.simulating") && sim.message != tr("overlay.simulating"))
+                rows.emplace_back(sim.message, ui.th.text);
+            rows.emplace_back(trf("sim.details.warnings", {std::to_string(sim.warnings.size())}), sim.warnings.empty() ? ui.th.textDim : ui.th.danger);
+            for (const auto& warning : sim.warnings) rows.emplace_back("• " + warning, ui.th.danger);
+            rows.emplace_back(tr("sim.details.notes"), ui.th.text);
+            if (sim.notes.empty()) rows.emplace_back(tr("sim.details.no_notes"), ui.th.textDim);
+            for (const auto& note : sim.notes) rows.emplace_back("• " + note, ui.th.textDim);
+        }
+        float contentHeight = 8 * scale;
+        for (const auto& row : rows)
+            contentHeight += ui.wrappedText(Rect(0, 0, width, 0), row.first, row.second, 14 * scale, false) + 10 * scale;
+        float offset = ui.beginScroll("simulation-details-body", body, contentHeight);
+        float top = body.y + offset;
+        for (const auto& row : rows)
+            top += ui.wrappedText(Rect(body.x, top, width, 0), row.first, row.second, 14 * scale) + 10 * scale;
+        ui.endScroll();
+    });
+}
 namespace {
 
 std::string colorName(int c) { return tr(std::string("cc.color.") + cc::colorKey(c)); }

@@ -88,6 +88,10 @@ Keyboard shortcuts are listed under **Help ▸ Keyboard & Touch Shortcuts**. Eve
 and what each mouse button does, can be changed in **View ▸ Settings** — the choice is stored in
 `config.toml` in the preferences folder, so it survives a restart.
 
+In the schematic, `Alt+W` enters wire mode: click the start and end points, with pin snapping. Right-click or `Esc` exits. Tap `Space` to rotate selected parts (`Shift+Space` reverses); hold `Space` and drag to pan. Custom bindings take precedence, and `R` remains available for rotation.
+
+**Tools ▸ Simulation** groups start/stop, restart and simulation details. The bottom simulation button remains available.
+
 ## All features
 
 An open-source electronics design app for **desktop and mobile**. Build a circuit on a virtual breadboard, draw
