@@ -460,7 +460,7 @@
   "ai.placeholder.busy": "正在处理…",
   "ai.new_chat": "新对话",
   "ai.mcp_copy": "复制 MCP 配置用于其他应用",
-  "toast.mcp_copied": "MCP 配置已复制，可粘贴到 Claude Desktop、Cursor、Conductor 或任意 MCP 客户端。",
+  "toast.mcp_copied": "MCP 配置已复制：应用打开着设计时，该客户端直接编辑你屏幕上的设计（可粘贴到 Claude Desktop、Cursor、Conductor 或任意 MCP 客户端）。",
   "video.title": "导出视频或 GIF",
   "video.recording": "正在录制 {0}…",
   "video.frame": "第 {0} / {1} 帧",

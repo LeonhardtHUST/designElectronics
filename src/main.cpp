@@ -7,7 +7,8 @@
 //   designElectronics --export-examples DIR     write the built-in examples as .dez files
 //   designElectronics --export-i18n DIR         write the built-in language packs as editable JSON
 //   designElectronics --export-logo DIR         write logo.svg and app icon PNGs
-//   designElectronics --mcp                     run as an MCP server on stdin/stdout (for AI assistants)
+//   designElectronics --mcp                     run as an MCP server on stdin/stdout (for AI assistants);
+//                                               attaches to the open app unless --standalone is given
 //   designElectronics --screenshot OUT.png [--example N] [--view bb|sch|pcb] [--sim]
 //                     [--autoroute] [--tidy] [--size WxH] [--drawer parts|inspector|layers]
 //                     [--select N] [--select-anno N]
@@ -1751,6 +1752,8 @@ static int spiceCli(int argc, char** argv, int at) {
 #endif
 int selftest() {
     int failures = 0;
+    SDL_Environment* env = SDL_GetEnvironment();
+    if (env) SDL_SetEnvironmentVariable(env, "DE_NO_LIVE", "1", true);  // no MCP bridge for a throwaway test window (see live.h)
     // The assertions below match the English source strings, so pin the language.
     i18n::initEmbedded();
     i18n::setLang("en");
@@ -3430,11 +3433,15 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char** argv) {
         if (a == "--mcp") {
             int port = 0;
             std::string token;
-            for (int k = i + 1; k + 1 < argc; k++) {
-                if (std::string(argv[k]) == "--connect") port = std::atoi(argv[k + 1]);
-                if (std::string(argv[k]) == "--token") token = argv[k + 1];
+            McpAttach attach = McpAttach::kAuto;
+            for (int k = i + 1; k < argc; k++) {
+                std::string opt = argv[k];
+                if (opt == "--connect" && k + 1 < argc) port = std::atoi(argv[++k]);
+                else if (opt == "--token" && k + 1 < argc) token = argv[++k];
+                else if (opt == "--standalone") attach = McpAttach::kStandalone;  // never touch the open app
+                else if (opt == "--attach") attach = McpAttach::kRequire;         // only the open app
             }
-            return runMcpServer(port, token) == 0 ? SDL_APP_SUCCESS : SDL_APP_FAILURE;
+            return runMcpServer(port, token, attach) == 0 ? SDL_APP_SUCCESS : SDL_APP_FAILURE;
         }
         if (a == "--selftest") return selftest() == 0 ? SDL_APP_SUCCESS : SDL_APP_FAILURE;
 #if DE_NGSPICE_DESKTOP

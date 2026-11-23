@@ -99,10 +99,15 @@ bool App::init(int argc, char** argv) {
     }
     savedRevision = doc.revision;
     autosaveRevision = doc.revision;
+    // A design is on screen: MCP clients the user starts (or already started) can
+    // attach to it from here on. The welcome screen publishes nothing, because
+    // there is no design behind it yet.
+    if (!startScreen) ensureAgentBridge();
     return true;
 }
 
 void App::shutdown() {
+    stopAgentBridge();
     autosave(true);
     g.shutdown();
     imageCache.clear();  // its textures belong to the renderer we are about to destroy
@@ -321,6 +326,7 @@ bool App::restoreAutosave() {
     simOn = false;
     drcIssues.clear();
     startScreen = false;
+    ensureAgentBridge();  // a design is on screen now: publish the bridge (see live.h)
     return true;
 }
 
@@ -336,6 +342,7 @@ void App::startScreenNew() {
     simOn = false;
     drcIssues.clear();
     startScreen = false;
+    ensureAgentBridge();  // a design is on screen now: publish the bridge (see live.h)
 }
 
 void App::drawStartScreen() {
@@ -445,6 +452,7 @@ bool App::loadFile(const std::string& path) {
     filePath = path;
     savedRevision = doc.revision;
     startScreen = false;  // an opened project replaces the first screen
+    ensureAgentBridge();  // a design is on screen now: publish the bridge (see live.h)
     undoStack.clear();
     redoStack.clear();
     selParts.clear(); selWires.clear(); selNotes.clear(); selAnnos.clear();
@@ -1424,6 +1432,9 @@ SDL_AppResult App::event(const SDL_Event& e) {
         e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_FINGER_DOWN) spaceRotatePending = false;
     float density = win ? SDL_GetWindowPixelDensity(win) : 1.f;
     switch (e.type) {
+        case SDL_EVENT_WINDOW_FOCUS_GAINED:
+            noteAgentFocus();  // several windows open: MCP attaches to the one being used
+            break;
         case SDL_EVENT_QUIT:
             if (dirty() && !quitNow) {
                 confirmDiscard([this]() { quitNow = true; });

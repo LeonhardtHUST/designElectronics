@@ -10,7 +10,9 @@ exe = sys.argv[1]
 out = sys.argv[2] if len(sys.argv) > 2 else tempfile.mkdtemp(prefix="de-mcp-")
 import os
 env = dict(os.environ, DE_HISTORY_DIR=os.path.join(out, "history"),
-           DE_PARTS_DIR=os.path.join(out, "parts"))  # keep test versions and models out of the user's library
+           DE_PARTS_DIR=os.path.join(out, "parts"),
+           DE_LIVE_DIR=os.path.join(out, "instances"))  # keep test versions and models out of the user's library,
+                                                        # and never attach to the app the user has open
 p = subprocess.Popen([exe, "--mcp"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, env=env)
 n = 0
 def rpc(method, params=None, notify=False):

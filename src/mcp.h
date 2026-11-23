@@ -1,5 +1,5 @@
 // designElectronics — MCP tools as a library: used by `designElectronics --mcp`
-// (stdio server, its own design) and by the in-app AI tab (the live design).
+// (stdio server) and by the in-app AI tab (the live design).
 #pragma once
 #include <functional>
 #include <memory>
@@ -23,6 +23,14 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
+// What a plain `--mcp` server does when it wasn't told where an app listens.
+enum class McpAttach {
+    kAuto,        // attach to the designElectronics window the user has open, if any
+    kStandalone,  // always keep a private design (--standalone)
+    kRequire,     // only work on the open window, refuse to start without one (--attach)
+};
+
 // stdio MCP server. With connectPort > 0 it forwards tool calls to the running
-// app (the AI tab), which applies them to the open design.
-int runMcpServer(int connectPort = 0, const std::string& token = "");
+// app (the AI tab), which applies them to the open design. Without one, kAuto
+// looks for the app's published bridge (see live.h) and attaches to that design.
+int runMcpServer(int connectPort = 0, const std::string& token = "", McpAttach attach = McpAttach::kAuto);

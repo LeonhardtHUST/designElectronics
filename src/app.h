@@ -368,7 +368,11 @@ public:
     int agentStartRev = 0;
     bool agentsSupported() const;
     void detectAgents();
+    // The localhost bridge behind the AI tab *and* behind MCP clients the user
+    // starts by hand; started as soon as a design is on screen, see live.h.
     void ensureAgentBridge();
+    void stopAgentBridge();
+    void noteAgentFocus();
     void startAgent(const std::string& prompt);
     void stopAgent();
     void newAgentChat();

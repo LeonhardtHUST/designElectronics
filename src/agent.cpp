@@ -6,6 +6,10 @@
 //    ▲                                         ▲  stdio MCP
 //    └─ applies tool calls to the live doc     └── started by the agent (claude -p …)
 //
+// The same bridge serves AI clients the user sets up by hand (`--mcp` only): the
+// app publishes port and token under <pref>/agent/instances and those clients
+// attach to it, so they edit the design on screen instead of an empty one.
+//
 // The agent runs in an empty folder and is only allowed designElectronics' tools.
 #include <algorithm>
 #include <atomic>
@@ -19,6 +23,7 @@
 
 #include "app.h"
 #include "i18n.h"
+#include "live.h"
 #include "mcp.h"
 #include "net.h"
 
@@ -98,9 +103,12 @@ struct App::AgentState {
     // bridge
     std::unique_ptr<McpSession> session;  // main thread only
     std::atomic<bool> stopBridge{false};
+    std::atomic<bool> accepting{false};  // the accept loop is running
+    std::atomic<int> clients{0};         // requests being served right now
     int port = 0;
     std::string token;
     long long listener = -1;
+    std::string record;  // the live-design record MCP clients find us through
     void add(ChatMsg::Role r, const std::string& t) {
         std::lock_guard<std::mutex> lk(m);
         if (r == ChatMsg::R_ASSISTANT && !messages.empty() && messages.back().role == ChatMsg::R_ASSISTANT && messages.back().streaming) {
@@ -182,8 +190,17 @@ void App::detectAgents() {
 // ---- bridge: the agent's MCP process forwards tool calls here ----
 void App::ensureAgentBridge() {
 #if defined(DE_HAVE_NET)
+    // The AI tab needs the bridge in screenshots and recordings too (--ai demos),
+    // so only read-only viewers stay without it.
+    if (!agentsSupported() || readOnly) return;
+    if (!agent) agent = std::make_shared<AgentState>();
     AgentState& st = *agent;
-    if (st.port) return;
+    if (st.stopBridge) return;  // shutting down: never listen again
+    if (st.port) {  // already listening: make sure clients can still find it
+        if (st.record.empty() && !scratchSession && !SDL_getenv("DE_NO_LIVE"))
+            st.record = live::publish(st.port, st.token, kAppVersion, selfExe());
+        return;
+    }
     st.session = std::make_unique<McpSession>(&doc);
     st.session->beforeEdit = [this]() { checkpoint(); };
     st.session->afterEdit = [this]() {
@@ -205,13 +222,19 @@ void App::ensureAgentBridge() {
     st.listener = net::listenLocal(port);
     if (st.listener == net::kInvalid) { st.add(ChatMsg::R_ERROR, tr("agent.no_listener")); return; }
     st.port = port;
+    // Clients started by hand (no --connect) look for this record; the listener is
+    // up, so a client that finds it can talk to us right away. Screenshots and
+    // recordings are throwaway windows and must not claim to be the live design.
+    if (!scratchSession && !SDL_getenv("DE_NO_LIVE")) st.record = live::publish(st.port, st.token, kAppVersion, selfExe());
     auto stp = agent;
     App* app = this;
     std::thread([stp, app]() {
+        stp->accepting = true;
         while (!stp->stopBridge) {
             net::Sock c = net::acceptClient(stp->listener, 200);
             if (c == net::kInvalid) continue;
             std::thread([stp, app, c]() {
+                stp->clients.fetch_add(1);
                 std::string buf, line;
                 while (!stp->stopBridge && net::readLine(c, buf, line)) {
                     Json req = Json::parse(line);
@@ -219,6 +242,14 @@ void App::ensureAgentBridge() {
                     if (req["token"].str() != stp->token) {
                         resp.set("isError", true);
                         resp.set("text", "Error: not authorised");
+                    } else if (req["method"].str() == "hello") {
+                        // A client checks that the record it found on disk still
+                        // names this app before sending any tools to it.
+                        resp.set("ok", true);
+                        resp.set("protocol", kBridgeProtocol);
+                        resp.set("app", "designElectronics");
+                        resp.set("version", kAppVersion);
+                        resp.set("pid", live::pid());
                     } else {
                         // run the tool on the main thread (the document lives there) and wait
                         struct Wait { std::mutex m; std::condition_variable cv; bool done = false; std::string text; bool err = false; };
@@ -242,11 +273,40 @@ void App::ensureAgentBridge() {
                     if (!net::sendAll(c, resp.dump(-1) + "\n")) break;
                 }
                 net::closeSock(c);
+                stp->clients.fetch_sub(1);
             }).detach();
         }
+        stp->accepting = false;
     }).detach();
 #endif
 }
+
+void App::stopAgentBridge() {
+#ifdef DE_HAVE_NET
+    // The record must not outlive the process: a client that attaches to a dead
+    // record would talk to nothing (or, worse, to whatever reuses that port).
+    live::unpublish();
+    if (!agent) return;
+    agent->stopBridge = true;  // the accept loop notices within 200 ms
+    agent->record.clear();
+    agent->port = 0;
+    // Give a request that was just read a moment to reach the main thread, then
+    // close the listener. Connections still idle in a read never touch the app
+    // again, and the process is about to exit anyway.
+    for (int i = 0; i < 40 && (agent->accepting.load() || agent->clients.load() > 0); i++) SDL_Delay(10);
+    if (!agent->accepting.load() && agent->listener != net::kInvalid) {
+        net::closeSock(agent->listener);
+        agent->listener = net::kInvalid;
+    }
+#endif
+}
+
+void App::noteAgentFocus() {
+#ifdef DE_HAVE_NET
+    if (agent && !agent->record.empty()) live::focus();  // several apps open: prefer this one
+#endif
+}
+
 
 // ---- run the agent on one message ----
 void App::startAgent(const std::string& prompt) {

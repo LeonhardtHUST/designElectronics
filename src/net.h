@@ -18,6 +18,8 @@ bool init();                                  // WSAStartup on Windows, no-op el
 Sock listenLocal(int& port);                  // bind 127.0.0.1:0, returns the chosen port
 Sock acceptClient(Sock listener, int timeoutMs);  // kInvalid on timeout/error
 Sock connectLocal(int port);
+// Give up on a peer that accepts but never answers (0 = block forever again).
+void setTimeout(Sock s, int ms);
 bool sendAll(Sock s, const std::string& data);
 // Read one '\n'-terminated line (without the newline). False when the peer closed.
 bool readLine(Sock s, std::string& buffer, std::string& line);

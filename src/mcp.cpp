@@ -31,6 +31,7 @@
 
 #include "doc.h"
 #include "history.h"
+#include "live.h"
 #include "mcp.h"
 #include "net.h"
 #include "partmodels.h"
@@ -84,6 +85,14 @@ Json schema(std::initializer_list<std::pair<const char*, Json>> props, std::init
     return s;
 }
 
+// Tools that only look: they never commit this server to its own design, so an
+// app that appears later can still be attached to.
+bool isReadOnlyTool(const std::string& name) {
+    static const std::set<std::string> kReadOnly = {"get_design", "list_parts", "get_part_info",
+                                                    "list_part_models", "get_part_model", "run_drc"};
+    return kReadOnly.count(name) > 0;
+}
+
 class Server {
 public:
     Server() : doc_(ownDoc_) {}
@@ -93,7 +102,13 @@ public:
     Json call(const std::string& name, const Json& a);
     // hooks (in-app session) and forwarding (proxy to the app)
     std::function<void()> beforeEdit, afterEdit, onReplaced;
-    std::function<bool(const std::string& name, const Json& args, std::string& text, bool& isError)> forward;
+    // Tool calls go to the app the user has open, when this server can find one.
+    // kSent: the app answered into `text`; kNoApp: nothing to attach to, so the
+    // call runs on this server's own design; kFailed: the app is gone mid-session.
+    enum class Forward { kSent, kNoApp, kFailed };
+    std::function<Forward(const std::string& name, const Json& args, std::string& text, bool& isError)> forward;
+    // Is the design behind `forward` live right now? (the initialize instructions)
+    std::function<bool()> connected;
 
 private:
     Document ownDoc_;
@@ -736,6 +751,13 @@ Json Server::callImpl(const std::string& name, const Json& a) {
         Connectivity c = conn();
         Json j = Json::object();
         j.set("title", doc_.title);
+        if (!live_) {
+            // Say which design this is: assistants otherwise report the server's
+            // own empty design as "the document the user has open".
+            j.set("standalone", true);
+            j.set("note", "Not attached to a designElectronics window: this is this MCP server's own design. "
+                          "If the user expects the design they see in the app, open the app before the MCP client starts this server.");
+        }
         if (!doc_.notesText.empty()) j.set("notes", doc_.notesText);
         if (!path_.empty()) j.set("path", path_);
         Json parts = Json::array();
@@ -1062,8 +1084,14 @@ Json Server::handle(const Json& msg, bool& reply) {
         info.set("name", "designElectronics");
         info.set("version", kAppVersion);
         r.set("serverInfo", info);
-        r.set("instructions", std::string(forward ? "You are connected to the designElectronics app the user has open: every change "
-                                                   "appears live on their screen. Start with get_design to see the current design. " : "") +
+        bool live = connected && connected();
+        r.set("instructions",
+              std::string(live ? "You are connected to the designElectronics app the user has open: every change appears live on "
+                                 "their screen, and every tool reads and writes that design. Start with get_design to see it. "
+                               : forward ? "Not attached to a designElectronics window yet: until one answers, tools work on this "
+                                           "server's own design. get_design says which design you are looking at; it attaches to the "
+                                           "app automatically if the user opens it before the first change. "
+                                        : "") +
               "Design electronics: breadboard, schematic and PCB views that share one netlist. Find parts with list_parts, add them "
               "with add_part, wire pins with connect (or plug parts into a breadboard with place_on_breadboard), check behaviour with "
               "simulate, then for a PCB add a pcb_board, autoroute, run_drc and export gerber. Save with save_design to a .dez file "
@@ -1086,17 +1114,23 @@ Json Server::handle(const Json& msg, bool& reply) {
         Json r = Json::object();
         try {
             const Json& args = p["arguments"].isObject() ? p["arguments"] : Json::object();
+            std::string name = p["name"].str();
+            std::string out;
+            bool isErr = false, answered = false;
             if (forward) {
-                std::string out;
-                bool isErr = false;
-                if (!forward(p["name"].str(), args, out, isErr)) out = "Error: couldn't reach the designElectronics app (is it still open?)", isErr = true;
-                item.set("text", out);
-                r.set("isError", isErr);
-            } else {
-                Json out = call(p["name"].str(), args);
-                item.set("text", text(out));
-                r.set("isError", false);
+                Forward f = forward(name, args, out, isErr);
+                answered = f != Forward::kNoApp;
+                if (f == Forward::kFailed) {
+                    out = "Error: couldn't reach the designElectronics app (is it still open?)";
+                    isErr = true;
+                }
             }
+            if (!answered) {  // this server's own design
+                out = text(call(name, args));
+                isErr = false;
+            }
+            item.set("text", out);
+            r.set("isError", isErr);
         } catch (const ToolError& e) {
             item.set("text", "Error: " + e.msg);
             r.set("isError", true);
@@ -1135,7 +1169,7 @@ std::string McpSession::callTool(const std::string& name, const Json& args, bool
     }
 }
 
-int runMcpServer(int connectPort, const std::string& token) {
+int runMcpServer(int connectPort, const std::string& token, McpAttach attach) {
     // Protocol messages go to the real stdout; anything else printed by the
     // library code (diagnostics) is redirected to stderr so it can't corrupt
     // the JSON-RPC stream.
@@ -1148,31 +1182,85 @@ int runMcpServer(int connectPort, const std::string& token) {
     Server server;
     loadUserPartModels();  // the user's .dezpart models are usable from the first call
 #ifdef DE_HAVE_NET
-    // proxy mode: tool calls go to the running app over 127.0.0.1
+    // Proxy mode: tool calls go to the running app over 127.0.0.1. The app tells
+    // us where its bridge is (--connect, the AI tab) or publishes a record we can
+    // find (live.h), so a client started by hand edits the design on screen.
     net::Sock appSock = net::kInvalid;
-    std::string appBuf;
+    std::string appBuf, appToken = token;
+    bool attached = false;      // attached to an app right now
+    bool everAttached = false;  // attached once: never fall back to a private copy afterwards
+    bool privateDesign = attach == McpAttach::kStandalone;
+
+    auto attachTo = [&](const LiveInstance& in) {
+        net::Sock s = net::connectLocal(in.port);
+        if (s == net::kInvalid) return false;
+        net::setTimeout(s, 900000);  // a simulation can keep the app busy for a while
+        appSock = s;
+        appToken = in.token;
+        attached = everAttached = true;
+        fprintf(stderr, "designElectronics: attached to the open app (pid %d)\n", in.pid);
+        return true;
+    };
+    auto findApp = [&]() {
+        for (const LiveInstance& in : live::instances())
+            if (live::hello(in) && attachTo(in)) return true;
+        return false;
+    };
+    auto ask = [&](const Json& req, std::string& out, bool& isErr) {
+        std::string line;
+        if (!net::sendAll(appSock, req.dump(-1) + "\n") || !net::readLine(appSock, appBuf, line)) {
+            net::closeSock(appSock);
+            appSock = net::kInvalid;
+            attached = false;
+            return false;
+        }
+        Json resp = Json::parse(line);
+        out = resp["text"].str();
+        isErr = resp["isError"].boolean();
+        return true;
+    };
+
     if (connectPort > 0) {
+        // the AI tab: it names its bridge and hands over the token
+        attached = everAttached = true;
         server.forward = [&](const std::string& name, const Json& args, std::string& text, bool& isError) {
             if (appSock == net::kInvalid) appSock = net::connectLocal(connectPort);
-            if (appSock == net::kInvalid) return false;
+            if (appSock == net::kInvalid) return Server::Forward::kFailed;
+            net::setTimeout(appSock, 900000);
             Json req = Json::object();
             req.set("token", token);
             req.set("name", name);
             req.set("arguments", args);
-            std::string line;
-            if (!net::sendAll(appSock, req.dump(-1) + "\n") || !net::readLine(appSock, appBuf, line)) {
-                net::closeSock(appSock);
-                appSock = net::kInvalid;
-                return false;
-            }
-            Json resp = Json::parse(line);
-            text = resp["text"].str();
-            isError = resp["isError"].boolean();
-            return true;
+            return ask(req, text, isError) ? Server::Forward::kSent : Server::Forward::kFailed;
         };
+    } else if (attach != McpAttach::kStandalone) {
+        if (attach == McpAttach::kRequire && !findApp()) {
+            fprintf(stderr, "designElectronics: no running app to attach to\n");
+            return 1;
+        }
+        server.forward = [&](const std::string& name, const Json& args, std::string& text, bool& isError) {
+            if (privateDesign) return Server::Forward::kNoApp;  // the private design, and it stays private
+            if (appSock == net::kInvalid && !findApp()) {
+                bool required = attach == McpAttach::kRequire;
+                if (everAttached || required) return Server::Forward::kFailed;
+                // Changing anything here would make attaching later lose that work.
+                if (!isReadOnlyTool(name)) privateDesign = true;
+                return Server::Forward::kNoApp;
+            }
+            Json req = Json::object();
+            req.set("token", appToken);
+            req.set("name", name);
+            req.set("arguments", args);
+            return ask(req, text, isError) ? Server::Forward::kSent : Server::Forward::kFailed;
+        };
+        if (attach == McpAttach::kAuto) {
+            findApp();  // attach now when the app is there
+            if (!attached) fprintf(stderr, "designElectronics: no running app found, using this server's own design\n");
+        }
     }
+    server.connected = [&]() { return attached; };
 #else
-    (void)connectPort; (void)token;
+    (void)connectPort; (void)token; (void)attach;
 #endif
     std::string line;
     while (std::getline(std::cin, line)) {

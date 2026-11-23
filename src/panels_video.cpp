@@ -39,7 +39,9 @@ struct App::VideoJob {
     bool cancel = false;
 };
 
-App::~App() = default;  // here, where VideoJob is complete
+// here, where VideoJob is complete. Screenshots and recordings skip shutdown(),
+// so the live-design record is dropped here too (stopAgentBridge is idempotent).
+App::~App() { stopAgentBridge(); }
 
 void App::openVideoSheet() {
     videoTitle = doc.title;

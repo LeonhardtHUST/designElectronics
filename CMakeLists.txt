@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(designElectronics VERSION 0.8.3 LANGUAGES C CXX)
+project(designElectronics VERSION 0.8.4 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -63,6 +63,7 @@ set(DE_SOURCES
   src/codec_h264.c
   src/codec_mp4.c
   src/net.cpp
+  src/live.cpp
   src/agent.cpp
   src/panels_ai.cpp
   src/partdata.cpp

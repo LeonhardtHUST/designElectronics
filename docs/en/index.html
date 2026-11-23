@@ -606,7 +606,7 @@ D9=PWM:30           # 30 % duty, simulated as the average voltage</code></pre>
     <li>The AI tab is in the desktop apps (it needs a command-line AI installed). The app finds tools from your terminal's PATH automatically.</li>
   </ul>
   <h2 style="margin-top:1.6em">Use designElectronics from other AI apps (MCP)</h2>
-  <p>Prefer Claude Desktop, Cursor, VS Code, Conductor or another MCP client? designElectronics has a built-in <a href="https://modelcontextprotocol.io">Model Context Protocol</a> server. The AI tab's <b>Copy MCP config for other apps</b> button copies the setup below. Started with <code>--mcp</code>, any MCP client can search parts, wire circuits, plug parts into a breadboard, simulate, autoroute, run DRC and export Gerbers, then save a <code>.dez</code> you open in the app. It runs locally; nothing goes over the network.</p>
+  <p>Prefer Claude Desktop, Cursor, VS Code, Conductor or another MCP client? designElectronics has a built-in <a href="https://modelcontextprotocol.io">Model Context Protocol</a> server. The AI tab's <b>Copy MCP config for other apps</b> button copies the setup below. Started with <code>--mcp</code>, it finds the designElectronics window you have open and works on <i>that</i> design: parts, wiring, simulations, autorouting and DRC appear on your canvas as they happen, and Gerbers or a <code>.dez</code> come out of it. With no window running it keeps its own design instead, and <code>get_design</code> says which case you are in. It runs locally; nothing goes over the network.</p>
   <h3>Set up</h3>
   <p><b>Claude Code</b></p>
 <pre><code>claude mcp add designElectronics -- /path/to/designElectronics --mcp
@@ -617,6 +617,7 @@ D9=PWM:30           # 30 % duty, simulated as the average voltage</code></pre>
     "designElectronics": { "command": "/path/to/designElectronics", "args": ["--mcp"] }
   }
 }</code></pre>
+  <p>Each window with a design open publishes where its local bridge listens (one small file per window in the app's preferences folder); the server attaches to the window you used last and drops the file when it quits. Start the app before the client, or restart the client after opening a design. <code>--standalone</code> never attaches, <code>--attach</code> refuses to start without the app.</p>
   <h3>Try asking</h3>
   <ul>
     <li>“Design an ESP32 circuit that blinks a red LED on GPIO2 on a breadboard, simulate it and save it to ~/blink.dez.”</li>

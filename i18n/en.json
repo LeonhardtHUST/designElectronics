@@ -460,7 +460,7 @@
   "ai.placeholder.busy": "Working…",
   "ai.new_chat": "New chat",
   "ai.mcp_copy": "Copy MCP config for other apps",
-  "toast.mcp_copied": "MCP config copied — paste it into Claude Desktop, Cursor, Conductor or any MCP client.",
+  "toast.mcp_copied": "MCP config copied — while the app is open with a design, that client edits the design you see (paste it into Claude Desktop, Cursor, Conductor or any MCP client).",
   "video.title": "Export video or GIF",
   "video.recording": "Recording {0}…",
   "video.frame": "Frame {0} of {1}",

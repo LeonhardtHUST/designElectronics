@@ -13,6 +13,7 @@ using socklen_t = int;
 #include <netinet/tcp.h>
 #include <poll.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
 #endif
 #include <cstring>
@@ -74,6 +75,19 @@ Sock connectLocal(int port) {
     sockaddr_in a = loopback(port);
     if (connect(s, (sockaddr*)&a, sizeof a) != 0) { closeSock((Sock)s); return kInvalid; }
     return (Sock)s;
+}
+
+void setTimeout(Sock s, int ms) {
+    if (s == kInvalid || ms <= 0) return;
+#ifdef _WIN32
+    DWORD t = (DWORD)ms;
+    setsockopt((SOCKET)s, SOL_SOCKET, SO_RCVTIMEO, (const char*)&t, sizeof t);
+    setsockopt((SOCKET)s, SOL_SOCKET, SO_SNDTIMEO, (const char*)&t, sizeof t);
+#else
+    timeval tv{ms / 1000, (ms % 1000) * 1000};
+    setsockopt((int)s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+    setsockopt((int)s, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
+#endif
 }
 
 bool sendAll(Sock s, const std::string& data) {

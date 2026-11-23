@@ -47,7 +47,7 @@ open build/designElectronics.app
 claude mcp add designElectronics -- "$PWD/build/designElectronics.app/Contents/MacOS/designElectronics" --mcp
 ```
 
-Claude Code、Codex、Gemini CLI、Cursor 等客户端可通过 MCP 搜索元件、布线、仿真、自动布线、DRC 和导出。详见 [docs/MCP.md](docs/MCP.md)。
+Claude Code、Codex、Gemini CLI、Cursor 等客户端可通过 MCP 搜索元件、布线、仿真、自动布线、DRC 和导出。应用开着设计时，`--mcp` 会直接连到那个窗口，改动落在你屏幕上的设计里；没开应用时它用自己的内存设计。详见 [docs/MCP.md](docs/MCP.md)。
 
 ### 自测
 

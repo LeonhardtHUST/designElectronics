@@ -15,12 +15,15 @@ port = srv.getsockname()[1]
 def fake_app():
     c, _ = srv.accept()
     f = c.makefile("rwb")
-    for line in f:
-        req = json.loads(line)
-        seen.append(req)
-        ok = req.get("token") == "secret"
-        resp = {"isError": not ok, "text": json.dumps({"added": req["arguments"].get("type")}) if ok else "Error: not authorised"}
-        f.write((json.dumps(resp) + "\n").encode()); f.flush()
+    try:
+        for line in f:
+            req = json.loads(line)
+            seen.append(req)
+            ok = req.get("token") == "secret"
+            resp = {"isError": not ok, "text": json.dumps({"added": req["arguments"].get("type")}) if ok else "Error: not authorised"}
+            f.write((json.dumps(resp) + "\n").encode()); f.flush()
+    except Exception:
+        pass  # the server went away first; the assertions below already ran
 
 threading.Thread(target=fake_app, daemon=True).start()
 p = subprocess.Popen([exe, "--mcp", "--connect", str(port), "--token", "secret"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
