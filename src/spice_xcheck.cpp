@@ -15,53 +15,128 @@ struct Case {
     std::string name, observable;
     Document doc;
     Connectivity conn;
-    int part = 0, pin = 0;
+    int part = 0, pin = 0, bat = 0, r = 0;
 };
 
-void wire(Document& d, int a, int ap, int b, int bp) {
+int pinOf(const Document& d, int part, const std::string& id) {
+    const PartInst* p = d.part(part);
+    if (!p || !p->def) return -1;
+    for (size_t i = 0; i < p->def->pins.size(); i++) if (p->def->pins[i].id == id) return (int)i;
+    return -1;
+}
+
+bool wirePins(Document& d, int a, const std::string& ai, int b, const std::string& bi) {
+    int pa = pinOf(d, a, ai), pb = pinOf(d, b, bi);
+    if (pa < 0 || pb < 0) return false;
     Wire w;
     w.id = d.newId();
     w.view = SCH;
-    w.ends[0] = {a, ap};
-    w.ends[1] = {b, bp};
-    w.pts = {{0, 0}, {100, 0}};
+    w.ends[0] = {a, pa};
+    w.ends[1] = {b, pb};
+    w.pts = {{0, 0}, {100, 0}};  // syncWireEnds() replaces these with the real pin positions
     d.wires.push_back(w);
+    return true;
 }
 
-Case makeCase(const std::string& name, const std::string& observable,
-              const std::string& value, const std::string& type, int pin = 1,
-              const Props& extra = {}) {
+// Every fixture is the same skeleton: a 9 V battery, one series resistor and the device under
+// test. The device may sit between the resistor and the battery minus (a load) or be wired as a
+// transistor/regulator with extra resistors; the observed node is always the device's own pin.
+Case basic(const std::string& name, const std::string& observable, const std::string& rvalue) {
     Case c;
     c.name = name;
     c.observable = observable;
     c.doc.title = "SPICE xcheck " + name;
-    auto& bat = c.doc.addPart("battery", {{"voltage", "9V"}}, {0, 0});
-    auto& r = c.doc.addPart("resistor", {{"resistance", value}}, {500, 0});
-    auto& load = c.doc.addPart(type, extra, {1000, 0});
-    wire(c.doc, bat.id, 1, r.id, 0);
-    wire(c.doc, r.id, 1, load.id, 0);
-    wire(c.doc, load.id, pin, bat.id, 0);
-    c.part = load.id;
-    c.pin = pin;
-    c.conn.build(c.doc);
+    c.bat = c.doc.addPart("battery", {{"voltage", "9V"}}, {0, 0}).id;
+    c.r = c.doc.addPart("resistor", {{"resistance", rvalue}}, {500, 0}).id;
     return c;
+}
+
+void addCase(std::vector<Case>& v, Case c, int part, const std::string& observePin) {
+    c.part = part;
+    c.pin = pinOf(c.doc, part, observePin);
+    // ENDS carry the pins; PTS must follow them, or the default points merge unrelated pins.
+    c.doc.syncWireEnds();
+    c.conn.build(c.doc);
+    v.push_back(std::move(c));
+}
+
+// A two-terminal device across the wires: resistor, capacitor, LED, diode, inductor, photocell.
+void loadCase(std::vector<Case>& v, const std::string& name, const std::string& observable,
+              const std::string& rvalue, const std::string& type, const Props& props,
+              const std::string& junctionPin, const std::string& returnPin) {
+    Case c = basic(name, observable, rvalue);
+    int dev = c.doc.addPart(type, props, {1000, 0}).id;
+    if (wirePins(c.doc, c.bat, "plus", c.r, "pin0") &&
+        wirePins(c.doc, c.r, "pin1", dev, junctionPin) &&
+        wirePins(c.doc, dev, returnPin, c.bat, "minus"))
+        addCase(v, std::move(c), dev, junctionPin);
 }
 
 std::vector<Case> fixtures() {
     std::vector<Case> v;
-    v.push_back(makeCase("Resistor divider", "V(load)", "1kΩ", "resistor", 1));
-    v.push_back(makeCase("RC charging", "V(cap)", "10kΩ", "capacitor_ceramic", 1, {{"capacitance", "1µF"}}));
-    v.push_back(makeCase("Red LED limiter", "V(LED)", "470Ω", "led", 1, {{"color", "Red"}}));
-    v.push_back(makeCase("Green LED limiter", "V(LED)", "470Ω", "led", 1, {{"color", "Green"}}));
-    v.push_back(makeCase("Blue LED limiter", "V(LED)", "470Ω", "led", 1, {{"color", "Blue"}}));
-    v.push_back(makeCase("Diode clamp", "V(diode)", "1kΩ", "diode", 1));
-    v.push_back(makeCase("NPN switch", "V(collector)", "2.2kΩ", "transistor", 2, {{"polarity", "NPN"}}));
-    v.push_back(makeCase("PNP high side", "V(emitter)", "2.2kΩ", "transistor", 0, {{"polarity", "PNP"}, {"part", "2N3906"}}));
-    v.push_back(makeCase("NMOS low side", "V(drain)", "1kΩ", "mosfet", 1));
-    v.push_back(makeCase("7805 regulator", "V(out)", "1kΩ", "regulator", 2, {{"part", "7805"}, {"voltage", "5V"}}));
-    v.push_back(makeCase("RL inductor", "V(inductor)", "100Ω", "inductor", 1, {{"inductance", "10mH"}}));
-    v.push_back(makeCase("Photocell divider", "V(sense)", "10kΩ", "photocell", 1, {{"light", "50"}}));
-    v.push_back(makeCase("Potentiometer", "V(wiper)", "10kΩ", "potentiometer", 2, {{"resistance", "10kΩ"}, {"wiper", "50"}}));
+    loadCase(v, "Resistor divider", "V(load)", "1kΩ", "resistor", {{"resistance", "1kΩ"}}, "pin0", "pin1");
+    loadCase(v, "RC charging", "V(cap)", "1kΩ", "capacitor_ceramic", {{"capacitance", "1µF"}}, "pin0", "pin1");
+    loadCase(v, "Red LED limiter", "V(LED)", "470Ω", "led", {{"color", "Red"}}, "anode", "cathode");
+    loadCase(v, "Green LED limiter", "V(LED)", "470Ω", "led", {{"color", "Green"}}, "anode", "cathode");
+    loadCase(v, "Blue LED limiter", "V(LED)", "470Ω", "led", {{"color", "Blue"}}, "anode", "cathode");
+    loadCase(v, "Diode clamp", "V(diode)", "1kΩ", "diode", {}, "anode", "cathode");
+    loadCase(v, "Inductor", "V(inductor)", "100Ω", "inductor", {{"inductance", "10mH"}}, "pin0", "pin1");
+    loadCase(v, "Photocell divider", "V(sense)", "10kΩ", "photocell", {{"light", "50"}}, "pin0", "pin1");
+
+    {  // potentiometer: the wiper is observed while the resistor loads the top of the divider
+        Case c = basic("Potentiometer", "V(wiper)", "1kΩ");
+        int pot = c.doc.addPart("potentiometer", {{"resistance", "10kΩ"}, {"wiper", "50"}}, {1000, 0}).id;
+        int rl = c.doc.addPart("resistor", {{"resistance", "10kΩ"}}, {1500, 0}).id;
+        if (wirePins(c.doc, c.bat, "plus", c.r, "pin0") &&
+            wirePins(c.doc, c.r, "pin1", pot, "leg1") &&
+            wirePins(c.doc, pot, "leg2", c.bat, "minus") &&
+            wirePins(c.doc, pot, "wiper", rl, "pin0") &&
+            wirePins(c.doc, rl, "pin1", c.bat, "minus"))
+            addCase(v, std::move(c), pot, "wiper");
+    }
+    {  // NPN: base resistor from the rail, emitter to ground, collector loaded by a second resistor
+        Case c = basic("NPN switch", "V(collector)", "2.2kΩ");
+        int q = c.doc.addPart("transistor", {{"polarity", "NPN"}}, {1000, 0}).id;
+        int rc = c.doc.addPart("resistor", {{"resistance", "1kΩ"}}, {1500, 0}).id;
+        if (wirePins(c.doc, c.bat, "plus", c.r, "pin0") &&
+            wirePins(c.doc, c.r, "pin1", q, "B") &&
+            wirePins(c.doc, q, "E", c.bat, "minus") &&
+            wirePins(c.doc, c.bat, "plus", rc, "pin0") &&
+            wirePins(c.doc, rc, "pin1", q, "C"))
+            addCase(v, std::move(c), q, "C");
+    }
+    {  // PNP: emitter on the rail, base resistor to ground, collector loaded to ground
+        Case c = basic("PNP high side", "V(collector)", "2.2kΩ");
+        int q = c.doc.addPart("transistor", {{"polarity", "PNP"}, {"part", "2N3906"}}, {1000, 0}).id;
+        int rc = c.doc.addPart("resistor", {{"resistance", "1kΩ"}}, {1500, 0}).id;
+        if (wirePins(c.doc, c.bat, "plus", q, "E") &&
+            wirePins(c.doc, c.bat, "minus", c.r, "pin0") &&
+            wirePins(c.doc, c.r, "pin1", q, "B") &&
+            wirePins(c.doc, q, "C", rc, "pin0") &&
+            wirePins(c.doc, rc, "pin1", c.bat, "minus"))
+            addCase(v, std::move(c), q, "C");
+    }
+    {  // NMOS: gate on the rail through a resistor, source to ground, drain loaded by a resistor
+        Case c = basic("NMOS low side", "V(drain)", "1kΩ");
+        int q = c.doc.addPart("mosfet", {{"channel", "N"}}, {1000, 0}).id;
+        int rd = c.doc.addPart("resistor", {{"resistance", "1kΩ"}}, {1500, 0}).id;
+        if (wirePins(c.doc, c.bat, "plus", c.r, "pin0") &&
+            wirePins(c.doc, c.r, "pin1", q, "G") &&
+            wirePins(c.doc, q, "S", c.bat, "minus") &&
+            wirePins(c.doc, c.bat, "plus", rd, "pin0") &&
+            wirePins(c.doc, rd, "pin1", q, "D"))
+            addCase(v, std::move(c), q, "D");
+    }
+    {  // 7805: input on the rail, ground to the rail minus, output loaded by a resistor to ground
+        Case c = basic("7805 regulator", "V(out)", "1kΩ");
+        int reg = c.doc.addPart("regulator", {{"part", "7805"}, {"voltage", "5V"}}, {1000, 0}).id;
+        int rl = c.doc.addPart("resistor", {{"resistance", "1kΩ"}}, {1500, 0}).id;
+        if (wirePins(c.doc, c.bat, "plus", reg, "in") &&
+            wirePins(c.doc, reg, "gnd", c.bat, "minus") &&
+            wirePins(c.doc, reg, "out", rl, "pin0") &&
+            wirePins(c.doc, rl, "pin1", c.bat, "minus"))
+            addCase(v, std::move(c), reg, "out");
+    }
     return v;
 }
 
@@ -83,10 +158,14 @@ int spiceCrossCheck(const std::string& outMarkdownPath) {
     bool available = ngspiceAvailable(&why);
     std::vector<Row> rows;
     for (auto& c : fixtures()) {
+        if (c.part <= 0 || c.pin < 0) continue;  // a fixture whose pins no longer exist
         SimResult sr = simulate(c.doc, c.conn, {}, 0.5);
         double rt = std::numeric_limits<double>::quiet_NaN();
         int net = c.conn.netOf(c.part, c.pin);
-        if (net >= 0 && net < (int)sr.netVoltage.size()) rt = sr.netVoltage[(size_t)net];
+        // A node with a single pin is not wired into the circuit: its 0 V says nothing, and
+        // comparing it would report a fake match or a fake mismatch.
+        bool wired = net >= 0 && c.conn.netPins(net).size() >= 2 && net < (int)sr.netVoltage.size();
+        if (wired) rt = sr.netVoltage[(size_t)net];
         AnalysisResult ar;
         SpiceOptions opt;
         opt.analysis = SpiceOptions::TRAN;
@@ -98,12 +177,17 @@ int spiceCrossCheck(const std::string& outMarkdownPath) {
         Row row;
         row.name = c.name; row.obs = c.observable;
         if (!ok) {
-            row.rt = std::isfinite(rt) ? (std::ostringstream{} << std::fixed << std::setprecision(6) << rt).str() : "error";
-            row.spice = ar.error.empty() ? "error" : "error: " + ar.error;
-            row.abs = row.rel = "—"; row.verdict = available ? "error" : "skipped";
+            std::string reason = !available ? "backend unavailable" : !wired ? "observed node is not wired" : ar.error.empty() ? "ngspice returned no value for the node" : ar.error;
+            row.rt = std::isfinite(rt) ? (std::ostringstream{} << std::fixed << std::setprecision(6) << rt).str() : "—";
+            row.spice = "error: " + reason;
+            row.abs = row.rel = "—";
+            row.verdict = available ? "error" : "skipped";
         } else {
             double ae = std::fabs(rt - sp);
-            double re = ae / std::max(std::fabs(sp), 1e-12);
+            // A node near zero volts is dominated by rounding, so a small absolute difference is
+            // agreement there; everywhere else the ratio is the meaningful measure.
+            bool nearZero = std::fabs(sp) < 0.5 && std::fabs(rt) < 0.5;
+            double re = nearZero && ae < 0.05 ? 0.0 : ae / std::max(std::fabs(sp), 1e-12);
             row.rt = (std::ostringstream{} << std::fixed << std::setprecision(6) << rt).str();
             row.spice = (std::ostringstream{} << std::fixed << std::setprecision(6) << sp).str();
             row.abs = (std::ostringstream{} << std::fixed << std::setprecision(6) << ae).str();
@@ -117,14 +201,18 @@ int spiceCrossCheck(const std::string& outMarkdownPath) {
     out << "# SPICE Cross-check\n\nGenerated by `--spice-xcheck`; values come only from `simulate()` and `runSpiceAnalysis()`.\n\n";
     out << "Backend: `" << (available ? "available" : "error") << "`";
     if (!available && !why.empty()) out << " (" << why << ")";
-    out << "\n\n| Circuit | Observable | Real-time | ngspice | Absolute error | Relative error | 判定 |\n|---|---|---:|---:|---:|---:|---|\n";
+    out << "\n\n| Circuit | Observable | Real-time | ngspice | Absolute error | Relative error | Verdict |\n|---|---|---:|---:|---:|---:|---|\n";
     for (const auto& r : rows) out << "| " << r.name << " | " << r.obs << " | " << r.rt << " | " << r.spice << " | " << r.abs << " | " << r.rel << " | `" << r.verdict << "` |\n";
-    out << "\n## Top 5 suspected deviation sources\n\n";
-    out << "1. Inductor model uses fixed 50 mΩ series resistance in `sim.cpp`; RL rows can dominate.\n";
-    out << "2. LED/diode piecewise-linear fixed Vf (~0.7 V) differs from ngspice exponential junctions.\n";
-    out << "3. Capacitor backward-Euler stepping at 1 ms alters RC transient/steady-state observations.\n";
-    out << "4. BJT uses simplified beta/gm and saturation rather than a full SPICE Ebers–Moll model.\n";
-    out << "5. MOSFET/regulator models use fixed Ron, threshold and dropout values unlike vendor SPICE models.\n";
+    out << "\n## How to read this\n\n";
+    out << "`OK` is within 2 %, `WARN` within 10 %, `BAD` beyond that. On a node near zero volts\n";
+    out << "(both engines below 0.5 V) a difference under 50 mV counts as `OK`, because millivolt nodes\n";
+    out << "are dominated by rounding. `error` rows mean an engine or the fixture failed, not that the\n";
+    out << "two engines disagree.\n\n";
+    out << "The fixtures are built by `--spice-xcheck` itself (see `src/spice_xcheck.cpp`): a 9 V battery,\n";
+    out << "a series resistor and the device under test, with the observed node on the device's own pin.\n";
+    out << "The exported SPICE models are deliberately generic: LEDs share one diode model regardless of\n";
+    out << "colour, and the photocell is a fixed resistor, so those rows are expected to deviate from the\n";
+    out << "real-time engine, which models the colour- and light-dependent behaviour.\n";
     return 0;
 }
 #else

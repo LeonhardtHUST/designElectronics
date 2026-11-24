@@ -121,4 +121,4 @@ holes are 100 mil apart.
   `outputs` property (`HIGH`, `LOW`, `BLINK:ms`, `PWM:%`).
 * Test it without an AI: `python3 tests/mcp_smoke_test.py path/to/designElectronics`
   (standalone) and `python3 tests/mcp_attach_test.py path/to/designElectronics`
-  (attaching to a fake app).
+  (attaching to a fake app). CI runs both on macOS and Linux on every push.

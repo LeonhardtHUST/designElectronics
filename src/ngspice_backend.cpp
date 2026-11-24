@@ -135,7 +135,8 @@ bool runSpiceAnalysis(const Document& doc,const Connectivity& conn,const SpiceOp
  Capture capture; activeCapture = &capture; if(api.init(sendChar,sendStat,controlledExit,sendData,nullptr,bgRunning,nullptr)!=0){activeCapture=nullptr;out.error="ngspice initialization failed";out.log=callbackLog;return false;} api.cmd((char*)"destroy all");
  if(options.externalDigital){out.error="external digital source callbacks are not implemented; run with externalDigital=false";out.log=callbackLog;return false;}
  if(api.circ(ptrs.data())!=0 || api.cmd((char*)"run")!=0){activeCapture=nullptr;out.error="ngspice netlist/run failed";out.log=callbackLog;return false;} activeCapture=nullptr;
- out.log=callbackLog; if(char* p=api.plot()) out.plot=p; if (!capture.names.empty() && !capture.real.empty()) {
+ out.log=callbackLog; if(char* p=api.plot()) out.plot=p;
+  if (!capture.names.empty() && !capture.real.empty()) {
       size_t scaleIndex = 0;
       for (size_t i = 0; i < capture.names.size(); ++i) if (capture.scale[i] || lower(capture.names[i]).find("time") != std::string::npos || lower(capture.names[i]).find("frequency") != std::string::npos) { scaleIndex = i; break; }
       if (scaleIndex < capture.real.size()) out.scale = capture.real[scaleIndex];
@@ -151,13 +152,33 @@ bool runSpiceAnalysis(const Document& doc,const Connectivity& conn,const SpiceOp
       for (auto& kv : net.nodeNet) { std::string target = "v(" + lower(kv.first) + ")", bare = lower(kv.first); for (size_t i = 0; i < out.vecNames.size(); ++i) { std::string vn = lower(out.vecNames[i]); if (vn == target || vn == bare || vn == target + "_mag" || vn == bare + "_mag") out.netV[kv.second] = out.data[i]; } }
       if (!out.scale.empty() && !out.data.empty()) { out.ok = true; return true; }
   } char** names=api.vecs(out.plot.empty()?nullptr:out.plot.data()); if(!names){out.error="ngspice returned no vectors";return false;}
- size_t n=0; while(names[n]) n++; if(!n){out.error="ngspice returned empty analysis data";return false;}
- std::vector<std::string> fullNames(n); std::vector<VecInfo*> infos(n); size_t rows=0; for(size_t i=0;i<n;i++){fullNames[i]=out.plot+"."+names[i]; infos[i]=api.info(fullNames[i].data()); if(!infos[i]) infos[i]=api.info(names[i]); if(!infos[i]||infos[i]->v_length<0){out.error="ngspice returned invalid vector info";return false;}rows=std::max(rows,(size_t)infos[i]->v_length);} if(!rows){out.error="ngspice returned empty analysis data";return false;}
- size_t scaleIndex=0; for(size_t i=0;i<n;i++){std::string nm=lower(names[i]);if(nm.find("time")!=std::string::npos||nm.find("frequency")!=std::string::npos){scaleIndex=i;break;}}
- auto append=[&](const char* name,VecInfo* vi){if(!vi)return;size_t len=(size_t)vi->v_length; if(vi->v_compdata){std::vector<double> mag(len),phase(len);for(size_t k=0;k<len;k++){double re=vi->v_compdata[k].real,im=vi->v_compdata[k].imag;mag[k]=std::hypot(re,im);phase[k]=std::atan2(im,re)*180.0/M_PI;}out.vecNames.emplace_back(std::string(name)+"_mag");out.data.push_back(std::move(mag));out.vecNames.emplace_back(std::string(name)+"_phase");out.data.push_back(std::move(phase));}else if(vi->v_realdata){out.vecNames.emplace_back(name);out.data.emplace_back(vi->v_realdata,vi->v_realdata+len);}};
- VecInfo* scale=infos[scaleIndex]; if(scale->v_realdata) out.scale.assign(scale->v_realdata,scale->v_realdata+(size_t)scale->v_length); else if(scale->v_compdata){out.scale.resize((size_t)scale->v_length);for(size_t k=0;k<out.scale.size();k++)out.scale[k]=scale->v_compdata[k].real;} 
- for(size_t i=0;i<n;i++)if(i!=scaleIndex)append(names[i],infos[i]);
- for(auto& kv:net.nodeNet){std::string target="v("+lower(kv.first)+")",bare=lower(kv.first);for(size_t i=0;i<out.vecNames.size();i++){std::string nm=lower(out.vecNames[i]);if(nm==target||nm==bare||nm==target+"_mag"||nm==bare+"_mag")out.netV[kv.second]=out.data[i];}}
- if(out.scale.empty()||out.data.empty()){out.error="ngspice returned no usable vectors";return false;} out.ok=true; return true;
+  size_t n=0; while(names[n]) n++; if(!n){out.error="ngspice returned empty analysis data";return false;}
+  // ngGet_Vec_Info hands out one reused vector_info (a static in ngspice's sharedspice.c), so a
+  // vector's data has to be copied by the call that produced it. Keeping the pointers and reading
+  // them after the loop makes every vector return the last query's samples (the scale, i.e. time).
+  auto fetch=[&](const std::string& name,std::vector<double>& real,std::vector<double>& imag,bool& complex)->bool{
+      std::string full=out.plot+"."+name, bare=name;
+      VecInfo* vi=api.info(full.data()); if(!vi) vi=api.info(bare.data());
+      if(!vi||vi->v_length<0){out.error="ngspice returned invalid vector info";return false;}
+      size_t len=(size_t)vi->v_length;
+      if(vi->v_compdata){complex=true;real.resize(len);imag.resize(len);for(size_t k=0;k<len;k++){real[k]=vi->v_compdata[k].real;imag[k]=vi->v_compdata[k].imag;}}
+      else if(vi->v_realdata){complex=false;real.assign(vi->v_realdata,vi->v_realdata+len);imag.clear();}
+      else {out.error="ngspice vector has no data";return false;}
+      return true;
+  };
+  std::vector<std::string> vecNames(n); for(size_t i=0;i<n;i++) vecNames[i]=names[i]?names[i]:"";
+  size_t scaleIndex=0; for(size_t i=0;i<n;i++){std::string nm=lower(vecNames[i]);if(nm.find("time")!=std::string::npos||nm.find("frequency")!=std::string::npos){scaleIndex=i;break;}}
+  std::vector<double> scaleReal,scaleImag; bool scaleComplex=false;
+  if(!fetch(vecNames[scaleIndex],scaleReal,scaleImag,scaleComplex)) return false;
+  out.scale=std::move(scaleReal);
+  for(size_t i=0;i<n;i++){
+      if(i==scaleIndex) continue;
+      std::vector<double> real,imag; bool complex=false;
+      if(!fetch(vecNames[i],real,imag,complex)) return false;
+      if(complex){std::vector<double> mag(real.size()),phase(real.size());for(size_t k=0;k<real.size();k++){mag[k]=std::hypot(real[k],imag[k]);phase[k]=std::atan2(imag[k],real[k])*180.0/M_PI;}out.vecNames.emplace_back(vecNames[i]+"_mag");out.data.push_back(std::move(mag));out.vecNames.emplace_back(vecNames[i]+"_phase");out.data.push_back(std::move(phase));}
+      else {out.vecNames.push_back(vecNames[i]);out.data.push_back(std::move(real));}
+  }
+  for(auto& kv:net.nodeNet){std::string target="v("+lower(kv.first)+")",bare=lower(kv.first);for(size_t i=0;i<out.vecNames.size();i++){std::string nm=lower(out.vecNames[i]);if(nm==target||nm==bare||nm==target+"_mag"||nm==bare+"_mag")out.netV[kv.second]=out.data[i];}}
+  if(out.scale.empty()||out.data.empty()){out.error="ngspice returned no usable vectors";return false;} out.ok=true; return true;
 #endif
 }

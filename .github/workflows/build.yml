@@ -108,6 +108,21 @@ jobs:
         shell: bash
         run: python3 tests/agent_bridge_test.py "${{ steps.bin.outputs.exe }}"
 
+      - name: MCP attach test (live app bridge)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: python3 tests/mcp_attach_test.py "${{ steps.bin.outputs.exe }}"
+
+      - name: SPICE cross-check (ngspice)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libngspice0
+          "${{ steps.bin.outputs.exe }}" --spice-xcheck spice-xcheck.md
+          cat spice-xcheck.md
+          python3 tools/check_xcheck.py spice-xcheck.md
+
       - name: Share link test
         if: runner.os != 'Windows'
         shell: bash

@@ -30,6 +30,7 @@ void spiceExportTests(int& failures) {
     tr.tstop = 1e-3;
     SpiceNetlist net = buildSpice(d, cn, tr);
     expect(has(net.text, ".tran") && has(net.text, "L") && has(net.text, "M") && has(net.text, "Q") && has(net.text, "R") && has(net.text, ".end"), "TRAN and analog device elements export");
+    expect(has(net.text, "min(max("), "regulator output clamps at its rated voltage");
     expect(has(net.text, "Rs1_") && has(net.text, "Rs2_"), "switch and pushbutton pin mapping export");
     expect(!has(net.text, " nc "), "no invalid NC nodes export");
     SpiceOptions ac;
