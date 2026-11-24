@@ -4,6 +4,17 @@
 
 📖 **中文站点：** https://leonhardthust.github.io/designElectronics/ · 🌐 **网页编辑器：** https://leonhardthust.github.io/designElectronics/app/
 
+## 0.8.5 更新
+
+- **SPICE 对拍终于给出真实数值。** `--spice-xcheck` 之前把 ngspice 的每个向量都读成时间轴：`ngGet_Vec_Info` 返回的是复用的结构体，指针存到循环之后再取已经失效，于是几个毫不相干的电路都显示同一个 0.5 V。现在每个向量在查询时立即拷贝，报告反映真实节点电压，`docs/SPICE_XCHECK.md` 已按新结果重新生成。
+- **7805 的 SPICE 模型重新限压。** 导出的 B 源只做了“输入减 2 V”，没有按额定值封顶，9 V 输入会得到 7 V；现在用 `min(max(...))` 限到 5 V，与实时仿真器一致。
+- **对拍电路本身修正。** 旧 fixture 在连续 `addPart()` 之间持有失效引用、导线端点写死导致所有引脚并成一个网、还把接地端当成观测点；现在按引脚 id 接线、同步导线端点，并为三极管/MOS/稳压器搭出真实电路。毫伏级节点改用绝对误差判定。
+- **CI 增加两道门禁。** Linux 任务安装 `libngspice0` 后运行 `--spice-xcheck`，由新增的 `tools/check_xcheck.py` 检查（不允许 error 行、不允许所有向量值相同、BAD 只允许已知的模型差异）；0.8.4 新增的 `tests/mcp_attach_test.py` 也接入了 macOS/Linux 任务。
+
+### 已知限制
+
+LED 与光敏器件的 SPICE 导出仍是通用模型（LED 不分颜色、光敏用固定电阻），对拍表里这三行仍标记为 `BAD`，报告与检查器都按“已知模型差异”放行，模型标定留待后续版本。`--spice-xcheck` 需要本机有 libngspice，CI 只覆盖 Linux。
+
 ## 0.8.4 更新
 
 - **MCP 现在连的是你打开的设计。** `designElectronics --mcp` 启动时先找正在运行的窗口：应用在有设计时把本地桥的端口和一次性令牌发布到用户配置目录，客户端读取记录、握手校验（协议号、应用名、进程号）后把工具调用转发过去，`get_design`、`add_part`、`simulate` 立刻作用在屏幕上那份设计里。上一版按“复制 MCP 配置”接上的 Claude Desktop、Cursor、WorkBuddy 等客户端看到的是一份空白文档，本版修复。
