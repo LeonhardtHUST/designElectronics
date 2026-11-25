@@ -102,14 +102,20 @@ pin, or within 3 mil of another wire end in the same view, connects to it.
 
 ```jsonc
 { "id": 13, "view": "breadboard", "at": [0, -1100], "size": [2200, 600], "text": "Hello",
-  "textSize": 108, "hidden": false }  // textSize: world units; hidden: Layers panel eye
+  "textSize": 108, "hidden": false, "layer": 0 }
+// textSize: world units; hidden: Layers panel eye.
+// layer: stack slot relative to the component levels of its view. 0 = under every
+// component, k = between level k-1 and level k, levelCount = above every component.
 ```
 
 Notes and annotations are layers too: each one can be selected, hidden and moved
-front/back from the Layers panel. Array order is the stacking order (later entries
-draw nearer the front, within their view). The bands stay fixed: wires draw above
-components, components above annotations, annotations above notes, so markup never
-hides a pin.
+front/back from the Layers panel. `layer` places it between component levels, so a
+text box can sit above one component and below the next; within one slot the array
+order decides (later entries draw nearer the front, and annotations draw over notes).
+Wires stay above everything. Boards and breadboards are the backdrop: decorations with
+`layer: 0` already sit above them. On the PCB view the board draws through copper, pad
+and silk passes, so markup there only has the under-the-board (`0`) and above-the-board
+(`>= 1`) choice.
 
 ## Annotations
 
@@ -136,7 +142,8 @@ a pin creates no net.
   "image": "3b1f…d9c4",            // kind == "image": key into "images"
   "rotation": 20,                  // kind == "image": degrees, clockwise about the centre
   "framed": true,                  // kind == "image": draw a border (stroke/widthStep/dashed)
-  "hidden": false                  // hidden by the Layers panel
+  "hidden": false,                 // hidden by the Layers panel
+  "layer": 0                       // stack slot, as for notes
 }
 ```
 

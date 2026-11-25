@@ -465,8 +465,35 @@ std::string exportSvg(const Document& doc, const Connectivity& conn, int view) {
             o += "<polyline points=\"" + pts + "\" fill=\"none\" stroke=\"" + col + "\" stroke-width=\"" + std::to_string(w.width) + "\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>\n";
         }
     };
+    // Notes are layers too: emit each one at its slot relative to the component levels
+    // (see Document::levelCount). Boards are the backdrop; the PCB keeps the two-band form.
+    auto emitNote = [&](const Note& n) {
+        snprintf(b, sizeof b, "<rect x=\"%.1f\" y=\"%.1f\" width=\"%.1f\" height=\"%.1f\" fill=\"#fff6b0\" stroke=\"#d8c860\" stroke-width=\"6\"/>\n", n.pos.x, n.pos.y, n.size.x, n.size.y);
+        o += b;
+        snprintf(b, sizeof b, "<text x=\"%.1f\" y=\"%.1f\" font-family=\"Sarasa Gothic SC, Noto Sans SC, Microsoft YaHei, PingFang SC, sans-serif\" font-size=\"%.1f\" fill=\"#333\">", n.pos.x + 40, n.pos.y + 40 + n.textSize * 0.86, n.textSize);
+        o += b;
+        o += esc(n.text) + "</text>\n";
+    };
+    const int noteSlots = doc.levelCount(view);
+    auto emitNotes = [&](int slot) {
+        for (auto& n : doc.notes)
+            if (n.view == view && !n.hidden && std::clamp(n.layer, 0, noteSlots) == slot) emitNote(n);
+    };
+    std::vector<int> partLevel(doc.parts.size(), -1);
+    {
+        int level = 0, gid = 0;
+        bool open = false;
+        for (size_t i = 0; i < doc.parts.size(); i++) {
+            const PartInst& p = doc.parts[i];
+            if (!p.def || p.def->isBoard || p.def->isBreadboard) continue;
+            if (!(p.group > 0 && open && p.group == gid)) { level++; gid = p.group; open = p.group > 0; }
+            partLevel[i] = level - 1;
+        }
+    }
+
     if (view == PCB) {
         for (auto& p : doc.parts) if (p.inView(PCB) && p.def->isBoard) for (auto& pr : p.def->gfx[PCB]) svgPrim(o, pr, p.place[PCB]);
+        emitNotes(0);
         for (auto& w : doc.wires) if (w.view == PCB && w.layer == BOTTOM) drawWire(w);
         for (auto& p : doc.parts) {
             if (!p.inView(PCB) || p.def->isBoard) continue;
@@ -491,9 +518,16 @@ std::string exportSvg(const Document& doc, const Connectivity& conn, int view) {
                 o += b;
             }
         }
+        for (int slot = 1; slot <= noteSlots; slot++) emitNotes(slot);
     } else {
-        for (auto& p : doc.parts) {
+        int emitted = -1;
+        for (size_t pi = 0; pi < doc.parts.size(); pi++) {
+            auto& p = doc.parts[pi];
             if (!p.inView(view)) continue;
+            if (partLevel[pi] > emitted) {
+                emitted = partLevel[pi];
+                emitNotes(emitted);
+            }
             o += "<g id=\"" + esc(p.label) + "\">\n";
             for (auto& pr : p.def->gfx[view]) svgPrim(o, pr, p.place[view], view != SCH);
             if (view == SCH && !p.def->isBreadboard && p.def->netProp.empty()) {
@@ -505,15 +539,8 @@ std::string exportSvg(const Document& doc, const Connectivity& conn, int view) {
             }
             o += "</g>\n";
         }
+        for (int slot = emitted + 1; slot <= noteSlots; slot++) emitNotes(slot);
         for (auto& w : doc.wires) if (w.view == view) drawWire(w);
-    }
-    for (auto& n : doc.notes) {
-        if (n.view != view || n.hidden) continue;
-        snprintf(b, sizeof b, "<rect x=\"%.1f\" y=\"%.1f\" width=\"%.1f\" height=\"%.1f\" fill=\"#fff6b0\" stroke=\"#d8c860\" stroke-width=\"6\"/>\n", n.pos.x, n.pos.y, n.size.x, n.size.y);
-        o += b;
-        snprintf(b, sizeof b, "<text x=\"%.1f\" y=\"%.1f\" font-family=\"Sarasa Gothic SC, Noto Sans SC, Microsoft YaHei, PingFang SC, sans-serif\" font-size=\"%.1f\" fill=\"#333\">", n.pos.x + 40, n.pos.y + 40 + n.textSize * 0.86, n.textSize);
-        o += b;
-        o += esc(n.text) + "</text>\n";
     }
     (void)conn;
     o += "</svg>\n";

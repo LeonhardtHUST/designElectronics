@@ -249,6 +249,7 @@ Json annoToJson(const Anno& a) {
         if (a.framed) o.set("framed", true);
     }
     if (a.hidden) o.set("hidden", true);
+    if (a.layer) o.set("layer", a.layer);
     return o;
 }
 
@@ -276,6 +277,7 @@ bool annoFromJson(const Json& j, Anno* out) {
     a.text = j["text"].str();
     a.textSize = j.has("textSize") ? std::clamp(j["textSize"].f(kNoteTextSize), 24.f, 400.f) : kNoteTextSize;
     a.hidden = j["hidden"].boolean();
+    a.layer = std::max(0, j["layer"].i());
     a.font = j["font"].str() == "mono" ? FONT_MONO : FONT_UI;  // anything else reads as the regular face
     // Files written before point text existed have no "point": they load as text boxes,
     // which is exactly what they were.

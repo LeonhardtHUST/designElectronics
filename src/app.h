@@ -65,6 +65,7 @@ struct Hit {
 struct HitCand {
     Hit h;
     int prio = 99;
+    int rank = 0;     // stack position inside one priority tier: higher draws in front
     float d = 1e30f;  // distance in pixels
 };
 

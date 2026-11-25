@@ -168,34 +168,25 @@ void App::drawLayers(Rect r) {
         return hay.find(f) != std::string::npos;
     };
 
-    // Levels, back to front: an ungrouped part on its own, or one run of a group.
+    // Levels, back to front: an ungrouped component on its own, or one run of a group.
+    // Boards and breadboards are the backdrop; they are listed at the very bottom.
     struct Level { int gid; std::vector<int> ids; };
-    std::vector<Level> levels;
-    for (size_t i = 0; i < doc.parts.size();) {
-        int gid = doc.parts[i].group;
-        if (gid > 0) {
-            Level L{gid, {}};
-            while (i < doc.parts.size() && doc.parts[i].group == gid) {
-                if (doc.parts[i].inView(view)) L.ids.push_back(doc.parts[i].id);
-                i++;
-            }
-            if (!L.ids.empty()) levels.push_back(L);
-        } else {
-            if (doc.parts[i].inView(view)) levels.push_back({0, {doc.parts[i].id}});
-            i++;
-        }
-    }
+    auto isBoardPart = [](const PartInst& p) { return p.def && (p.def->isBoard || p.def->isBreadboard); };
 
-    struct Row { int kind; int id; int depth; };  // 0 part, 1 group, 2 member, 3 wires, 4 notes, 5 annos, 6 anno
+    struct Row { int kind; int id; int depth; };  // 0 part, 1 group, 2 member, 3 wires, 4 notes, 5 annos, 6 anno, 7 note
     std::vector<Row> rows;
-    for (int li = (int)levels.size() - 1; li >= 0; li--) {
-        const Level& L = levels[(size_t)li];
+    int nWires = 0, nNotes = 0, nAnnos = 0;
+    for (auto& w : doc.wires) if (w.view == view) nWires++;
+    for (auto& n : doc.notes) if (n.view == view) nNotes++;
+    for (auto& a : doc.annos) if (a.view == view) nAnnos++;
+
+    auto pushLevelRows = [&](const Level& L) {
         std::vector<int> vis;
         for (int id : L.ids) {
             const PartInst* p = doc.part(id);
             if (p && matches(*p)) vis.push_back(id);
         }
-        if (vis.empty()) continue;
+        if (vis.empty()) return;
         if (L.gid > 0) {
             rows.push_back({1, L.gid, 0});
             if (!layerCollapsed.count(groupCollapseKey(L.gid)))
@@ -203,36 +194,89 @@ void App::drawLayers(Rect r) {
         } else {
             rows.push_back({0, vis[0], 0});
         }
-    }
+    };
 
-    int nWires = 0, nNotes = 0, nAnnos = 0;
-    for (auto& w : doc.wires) if (w.view == view) nWires++;
-    for (auto& n : doc.notes) if (n.view == view) nNotes++;
-    for (auto& a : doc.annos) if (a.view == view) nAnnos++;
     if (f.empty() && nWires) rows.push_back({3, kGroupWires, 0});
-    if (f.empty() && nNotes) {
-        rows.push_back({4, kGroupNotes, 0});
-        if (!layerCollapsed.count(kGroupNotes))
-            for (int i = (int)doc.notes.size() - 1; i >= 0; i--) {
-                const Note& n = doc.notes[(size_t)i];
-                if (n.view == view) rows.push_back({7, n.id, 1});
+
+    if (view == PCB) {
+        // The PCB draws through copper/pad/silk passes, so markup only has an under/over
+        // choice there; the list keeps its fixed bands.
+        std::vector<Level> all;
+        for (size_t i = 0; i < doc.parts.size();) {
+            int gid = doc.parts[i].group;
+            if (gid > 0) {
+                Level L{gid, {}};
+                while (i < doc.parts.size() && doc.parts[i].group == gid) {
+                    if (doc.parts[i].inView(view)) L.ids.push_back(doc.parts[i].id);
+                    i++;
+                }
+                if (!L.ids.empty()) all.push_back(L);
+            } else {
+                if (doc.parts[i].inView(view)) all.push_back({0, {doc.parts[i].id}});
+                i++;
             }
-    }
-    if (!f.empty()) {
-        for (int i = (int)doc.notes.size() - 1; i >= 0; i--) {
-            const Note& n = doc.notes[(size_t)i];
-            if (n.view == view && lower(n.text).find(f) != std::string::npos) rows.push_back({7, n.id, 0});
         }
-    }
-    if (f.empty() && nAnnos) {
-        rows.push_back({5, kGroupAnnos, 0});
-        if (!layerCollapsed.count(kGroupAnnos))
+        for (int li = (int)all.size() - 1; li >= 0; li--) pushLevelRows(all[(size_t)li]);
+        if (f.empty() && nNotes) {
+            rows.push_back({4, kGroupNotes, 0});
+            if (!layerCollapsed.count(kGroupNotes))
+                for (int i = (int)doc.notes.size() - 1; i >= 0; i--)
+                    if (doc.notes[(size_t)i].view == view) rows.push_back({7, doc.notes[(size_t)i].id, 1});
+        }
+        if (!f.empty())
+            for (int i = (int)doc.notes.size() - 1; i >= 0; i--)
+                if (doc.notes[(size_t)i].view == view && lower(doc.notes[(size_t)i].text).find(f) != std::string::npos)
+                    rows.push_back({7, doc.notes[(size_t)i].id, 0});
+        if (f.empty() && nAnnos) {
+            rows.push_back({5, kGroupAnnos, 0});
+            if (!layerCollapsed.count(kGroupAnnos))
+                for (int i = (int)doc.annos.size() - 1; i >= 0; i--)
+                    if (doc.annos[(size_t)i].view == view) rows.push_back({6, doc.annos[(size_t)i].id, 1});
+        }
+    } else {
+        // Breadboard and schematic: decorations sit between component levels, so the list
+        // is the real stack, top-most first.
+        std::vector<Level> comps;
+        for (size_t i = 0; i < doc.parts.size();) {
+            const PartInst& p = doc.parts[i];
+            if (!p.inView(view) || isBoardPart(p)) { i++; continue; }
+            if (p.group > 0) {
+                Level L{p.group, {}};
+                while (i < doc.parts.size() && doc.parts[i].group == p.group) {
+                    if (doc.parts[i].inView(view) && !isBoardPart(doc.parts[i])) L.ids.push_back(doc.parts[i].id);
+                    i++;
+                }
+                if (!L.ids.empty()) comps.push_back(L);
+            } else {
+                comps.push_back({0, {p.id}});
+                i++;
+            }
+        }
+        const int slots = doc.levelCount(view);
+        auto annoMatches = [&](const Anno& a) {
+            if (f.empty()) return true;
+            return lower(annoKindLabel(a.kind) + " " + a.text).find(f) != std::string::npos;
+        };
+        for (int slot = slots; slot >= 0; slot--) {
             for (int i = (int)doc.annos.size() - 1; i >= 0; i--) {
                 const Anno& a = doc.annos[(size_t)i];
-                if (a.view == view) rows.push_back({6, a.id, 1});
+                if (a.view != view || std::clamp(a.layer, 0, slots) != slot || !annoMatches(a)) continue;
+                rows.push_back({6, a.id, 0});
             }
+            for (int i = (int)doc.notes.size() - 1; i >= 0; i--) {
+                const Note& n = doc.notes[(size_t)i];
+                if (n.view != view || std::clamp(n.layer, 0, slots) != slot) continue;
+                if (!f.empty() && lower(n.text).find(f) == std::string::npos) continue;
+                rows.push_back({7, n.id, 0});
+            }
+            if (slot > 0 && slot - 1 < (int)comps.size()) pushLevelRows(comps[(size_t)slot - 1]);
+        }
+        for (int i = (int)doc.parts.size() - 1; i >= 0; i--) {
+            const PartInst& p = doc.parts[(size_t)i];
+            if (!p.inView(view) || !isBoardPart(p) || !matches(p)) continue;
+            rows.push_back({0, p.id, 0});
+        }
     }
-
     const float rowH = 40 * s;
     if (rows.empty()) {
         ui.wrappedText(list.inset(pad), f.empty() ? tr("layers.empty") : trf("layers.no_match", {layerFilter}), th.textDim, 13 * s);

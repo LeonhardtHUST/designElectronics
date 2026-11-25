@@ -61,6 +61,8 @@ struct Anno {
     float rotation = 0;  // degrees, clockwise, about the centre (kind == Image)
     bool framed = false;
     bool hidden = false;                    // hidden by the Layers panel
+    // Stack slot relative to the component levels of its view (see Document::levelCount).
+    int layer = 0;
 };
 
 // The colours offered for annotation strokes. Greys and one muted accent, kept

@@ -14,7 +14,7 @@
 constexpr const char* kFileFormat = "designElectronics";
 constexpr int kFileVersion = 3;  // 2 adds "annos"; 3 adds part "group" (hierarchy levels)
 constexpr const char* kFileExt = ".dez";
-constexpr const char* kAppVersion = "0.8.6";
+constexpr const char* kAppVersion = "0.8.7";
 
 struct PartInst {
     int id = 0;
@@ -80,6 +80,9 @@ struct Note {
     std::string text;
     float textSize = kNoteTextSize;
     bool hidden = false;  // hidden in the Layers panel; the design keeps the note
+    // Stack slot relative to the component levels of its view: 0 = under every component,
+    // k = between level k-1 and level k, levelCount() = above every component.
+    int layer = 0;
 };
 
 struct DesignRules {
@@ -155,6 +158,8 @@ public:
     bool canMoveNote(int id, int dir) const;
     bool moveAnno(int id, int dir);
     bool canMoveAnno(int id, int dir) const;
+    // Number of component levels in a view (a group is one level, boards excluded).
+    int levelCount(int view) const;
 
     PartInst& addPart(const std::string& type, const Props& props, Vec2 posAllViews);
     void removePart(int id);

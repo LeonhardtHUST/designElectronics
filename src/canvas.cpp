@@ -126,13 +126,29 @@ void App::collectHits(Vec2 s, std::vector<HitCand>& out) {
     out.clear();
     const Vec2 w = toWorld(s);
     const float z = std::max(cam[view].zoom, 1e-6f);
-    auto push = [&out](const Hit& h, int prio, float dPx) {
+    auto push = [&out](const Hit& h, int prio, float dPx, int rank = 0) {
         HitCand c;
         c.h = h;
         c.prio = prio;
+        c.rank = rank;
         c.d = dPx;
         out.push_back(c);
     };
+    // Stack ranks for the breadboard/schematic interleaving: slot k decorations sit between
+    // level k-1 and level k, so a note/annotation can be clicked above a component. The PCB
+    // keeps its fixed bands (markup under the board), hence no ranks there.
+    std::map<int, int> levelRank;
+    const int slots = doc.levelCount(view);
+    auto decoRank = [&](int layer, bool anno) { return 4 * std::clamp(layer, 0, slots) + (anno ? 1 : 0); };
+    if (view != PCB) {
+        int level = 0, gid = 0;
+        bool open = false;
+        for (auto& p : doc.parts) {
+            if (!p.inView(view) || !p.def || p.def->isBoard || p.def->isBreadboard) continue;
+            if (!(p.group > 0 && open && p.group == gid)) { level++; gid = p.group; open = p.group > 0; }
+            levelRank[p.id] = 4 * (level - 1) + 2;
+        }
+    }
 
     // 0 — handles of the current selection: note corner, annotation resize point
     if (layerShown(view, LY_NOTES)) {
@@ -228,7 +244,7 @@ void App::collectHits(Vec2 s, std::vector<HitCand>& out) {
                 Hit h;
                 h.kind = Hit::PART;
                 h.part = p->id;
-                push(h, 5, 0.f);
+                push(h, 5, 0.f, levelRank.count(p->id) ? levelRank[p->id] : 0);
             } else {
                 Hit h;
                 h.kind = Hit::PIN;
@@ -247,7 +263,7 @@ void App::collectHits(Vec2 s, std::vector<HitCand>& out) {
         Hit h;
         h.kind = Hit::PART;
         h.part = p.id;
-        push(h, 5, 0.f);
+        push(h, 5, 0.f, levelRank.count(p.id) ? levelRank[p.id] : 0);
     }
 
     // 6, 7 — annotations and notes (markup under the parts, and under their clicks
@@ -260,7 +276,7 @@ void App::collectHits(Vec2 s, std::vector<HitCand>& out) {
             Hit h;
             h.kind = Hit::NOTE;
             h.note = n.id;
-            push(h, 7, 0.f);  // under the markup, which is drawn over the notes
+            push(h, view == PCB ? 7 : 5, 0.f, view == PCB ? 0 : decoRank(n.layer, false));
         }
     }
     if (layerShown(view, LY_ANNO)) {
@@ -279,7 +295,7 @@ void App::collectHits(Vec2 s, std::vector<HitCand>& out) {
             Hit h;
             h.kind = Hit::ANNO;
             h.anno = a.id;
-            push(h, 6, d);
+            push(h, view == PCB ? 6 : 5, d, view == PCB ? 0 : decoRank(a.layer, true));
         }
     }
 
@@ -316,7 +332,10 @@ Hit App::hitTest(Vec2 s) {
     collectHits(s, cands);
     const HitCand* best = nullptr;
     for (auto& c : cands) {
-        if (!best || c.prio < best->prio || (c.prio == best->prio && c.d < best->d - 0.01f)) best = &c;
+        if (!best || c.prio < best->prio ||
+            (c.prio == best->prio && (c.rank > best->rank ||
+                                      (c.rank == best->rank && c.d < best->d - 0.01f))))
+            best = &c;
     }
     return best ? best->h : Hit();
 }
@@ -1431,9 +1450,12 @@ void App::drawCanvas(int v, const Camera& c, Rect vp, bool exporting) {
         drawPrims(p, v, c);
     }
 
-    // notes
-    for (auto& n : doc.notes) {
-        if (n.view != v || n.hidden || (!exporting && !layerShown(v, LY_NOTES))) continue;
+    // Notes, markup and components interleave by layer. Every note/annotation carries a
+    // slot relative to the component levels of its view (0 = under all of them,
+    // Document::levelCount() = above all). The PCB draws through copper/pad/silk passes,
+    // so there markup can sit under the board or above the whole board; breadboard and
+    // schematic interleave decoration by decoration between levels.
+    auto drawNote = [&](const Note& n) {
         Rect r(S(n.pos).x, S(n.pos).y, n.size.x * z, n.size.y * z);
         g.fillRect(Rect(r.x + 3 * s, r.y + 4 * s, r.w, r.h), rgba(0, 0, 0, 30));
         g.fillRect(r, rgba(255, 246, 176));
@@ -1453,14 +1475,8 @@ void App::drawCanvas(int v, const Camera& c, Rect vp, bool exporting) {
             g.strokeRect(r.inset(-3 * s), 2 * s, kSel);
             g.fillRect({r.r() - 5 * s, r.b() - 5 * s, 10 * s, 10 * s}, kSel);
         }
-    }
-
-    // annotations (markup): under the parts, so a box drawn around a part never covers
-    // one of its pins, and above the notes and the ratsnest lines
-    for (auto& a : doc.annos) {
-        if (a.view != v) continue;
-        if (!exporting && (a.hidden || !layerShown(v, LY_ANNO))) continue;
-        // Also here, so exports and video frames (which draw without input) hug the text.
+    };
+    auto drawAnnoHere = [&](Anno& a) {
         if (a.kind == AnnoKind::Text && a.pointText) annoFitText(a, g);
         bool sel = selVisible && selAnnos.count(a.id) > 0;
         bool hov = selVisible && hover.anno == a.id;
@@ -1468,39 +1484,22 @@ void App::drawCanvas(int v, const Camera& c, Rect vp, bool exporting) {
         // shape and text kinds stay in drawAnno().
         if (a.kind == AnnoKind::Image) {
             drawImageAnno(a, v, c, z, s, sel, hov);
-            continue;
+            return;
         }
         drawAnno(g, a, c.pan, z, s, sel, hov);
-    }
-
-    if (!exporting) drawAnnoPreview(c, z, s);
-
-    if (v == PCB) {
-        auto shownPcb = [&](const PartInst& p, int layer) { return exporting || (!p.hiddenIn(PCB) && layerShown(PCB, layer)); };
-        // the board itself went down under the markup, above
-        for (auto& w : doc.wires) if (w.view == PCB && w.layer != activeLayer) drawWire(w);
-        // pads
-        for (auto& p : doc.parts) {
-            if (!p.inView(PCB) || p.def->isBoard || !visible(p.worldBounds(PCB)) || !shownPcb(p, LY_PADS)) continue;
-            for (size_t i = 0; i < p.def->pins.size(); i++) {
-                const PinDef& pin = p.def->pins[i];
-                drawPad(g, S(p.pinPos((int)i, PCB)), pin, pin.padSize(p.place[PCB]), z);
-            }
-            for (auto& h : p.def->holes) g.fillCircle(S(p.place[PCB].apply(h.first)), h.second / 2 * z, rgba(30, 30, 32));
-        }
-        for (auto& w : doc.wires) if (w.view == PCB && w.layer == activeLayer) drawWire(w);
-        for (auto& p : doc.parts) {
-            if (!p.inView(PCB) || p.def->isBoard || !visible(p.worldBounds(PCB))) continue;
-            if (shownPcb(p, LY_SILK)) drawPrims(p, PCB, c);
-            if (showPartLabels && shownPcb(p, LY_LABELS) && p.type != "via" && p.type != "hole") {
-                Rect b = p.worldBounds(PCB);
-                g.text(S({b.x, b.y - 45}), p.silkLabel(), 50 * z, rgba(255, 255, 255, 230), 0, FONT_MONO);
-            }
-        }
-    } else {
-        for (auto& p : doc.parts) {
-            if (!p.inView(v) || !visible(p.worldBounds(v))) continue;
-            if (!exporting && (p.hiddenIn(v) || !layerShown(v, LY_PARTS))) continue;
+    };
+    const int slots = doc.levelCount(v);
+    auto drawDecorations = [&](int slot) {
+        if (exporting || layerShown(v, LY_NOTES))
+            for (auto& n : doc.notes)
+                if (n.view == v && !n.hidden && std::clamp(n.layer, 0, slots) == slot) drawNote(n);
+        if (!exporting && !layerShown(v, LY_ANNO)) return;
+        for (auto& a : doc.annos)
+            if (a.view == v && !a.hidden && std::clamp(a.layer, 0, slots) == slot) drawAnnoHere(a);
+    };
+    auto drawPartBody = [&](const PartInst& p) {
+            if (!p.inView(v) || !visible(p.worldBounds(v))) return;
+            if (!exporting && (p.hiddenIn(v) || !layerShown(v, LY_PARTS))) return;
             if (!isSubstrate(p)) {
                 drawPrims(p, v, c);
             }
@@ -1525,6 +1524,46 @@ void App::drawCanvas(int v, const Camera& c, Rect vp, bool exporting) {
                 for (size_t i = 0; i < p.def->pins.size(); i++)
                     if (!conn.pinConnectedInView(SCH, p.id, (int)i)) g.fillCircle(S(p.pinPos((int)i, SCH)), std::max(1.5f * s, 12 * z), rgba(220, 60, 60, 200));
             }
+    };
+    // boards and breadboards are the backdrop: always behind the decorations
+    for (auto& p : doc.parts) if (p.inView(v) && isSubstrate(p)) drawPartBody(p);
+
+    if (v == PCB) {
+        drawDecorations(0);
+        auto shownPcb = [&](const PartInst& p, int layer) { return exporting || (!p.hiddenIn(PCB) && layerShown(PCB, layer)); };
+        // the board itself went down under the markup, above
+        for (auto& w : doc.wires) if (w.view == PCB && w.layer != activeLayer) drawWire(w);
+        // pads
+        for (auto& p : doc.parts) {
+            if (!p.inView(PCB) || p.def->isBoard || !visible(p.worldBounds(PCB)) || !shownPcb(p, LY_PADS)) continue;
+            for (size_t i = 0; i < p.def->pins.size(); i++) {
+                const PinDef& pin = p.def->pins[i];
+                drawPad(g, S(p.pinPos((int)i, PCB)), pin, pin.padSize(p.place[PCB]), z);
+            }
+            for (auto& h : p.def->holes) g.fillCircle(S(p.place[PCB].apply(h.first)), h.second / 2 * z, rgba(30, 30, 32));
+        }
+        for (auto& w : doc.wires) if (w.view == PCB && w.layer == activeLayer) drawWire(w);
+        for (auto& p : doc.parts) {
+            if (!p.inView(PCB) || p.def->isBoard || !visible(p.worldBounds(PCB))) continue;
+            if (shownPcb(p, LY_SILK)) drawPrims(p, PCB, c);
+            if (showPartLabels && shownPcb(p, LY_LABELS) && p.type != "via" && p.type != "hole") {
+                Rect b = p.worldBounds(PCB);
+                g.text(S({b.x, b.y - 45}), p.silkLabel(), 50 * z, rgba(255, 255, 255, 230), 0, FONT_MONO);
+            }
+        }
+        for (int slot = 1; slot <= slots; slot++) drawDecorations(slot);
+    } else {
+        // component levels, back to front: a group is one level
+        std::vector<std::vector<const PartInst*>> levels;
+        for (auto& p : doc.parts) {
+            if (!p.inView(v) || isSubstrate(p)) continue;
+            if (p.group > 0 && !levels.empty() && levels.back().front()->group == p.group) levels.back().push_back(&p);
+            else levels.push_back({&p});
+        }
+        drawDecorations(0);
+        for (size_t k = 0; k < levels.size(); k++) {
+            for (auto* p : levels[k]) drawPartBody(*p);
+            drawDecorations((int)k + 1);
         }
         for (auto& w : doc.wires) if (w.view == v) drawWire(w);
         // schematic junction dots where 3+ things meet
@@ -1543,6 +1582,8 @@ void App::drawCanvas(int v, const Camera& c, Rect vp, bool exporting) {
             for (auto& kv : cnt) if (kv.second >= 3) g.fillCircle(S(Vec2((float)kv.first.first, (float)kv.first.second)), std::max(2.5f * s, 22 * z), rgba(48, 48, 48));
         }
     }
+    if (!exporting) drawAnnoPreview(c, z, s);
+
 
     // simulation effects
     if (simOn && v != PCB) {

@@ -246,46 +246,99 @@ static int annoIndex(const std::vector<Anno>& v, int id) {
     return -1;
 }
 
+int Document::levelCount(int view) const {
+    // Boards and breadboards are the backdrop, not a level: decorations can sit above them.
+    if (view == PCB) {
+        for (auto& p : parts) if (p.inView(PCB) && p.def && !p.def->isBoard && !p.def->isBreadboard) return 1;
+        return 0;
+    }
+    int levels = 0, gid = 0;
+    for (auto& p : parts) {
+        if (!p.inView(view) || !p.def || p.def->isBoard || p.def->isBreadboard) continue;
+        if (p.group > 0) {
+            if (p.group != gid) { levels++; gid = p.group; }
+        } else {
+            levels++;
+            gid = 0;
+        }
+    }
+    return levels;
+}
+
+static int slotOf(int layer, int levels) { return std::clamp(layer, 0, levels); }
+
+// Within one slot the array order decides (later = in front). Moving past the slot's last
+// decoration crosses the next component level instead.
 bool Document::moveNote(int id, int dir) {
     int i = noteIndex(notes, id);
     if (i < 0 || dir == 0) return false;
     int view = notes[(size_t)i].view;
-    int j = i + (dir > 0 ? 1 : -1);
-    while (j >= 0 && j < (int)notes.size() && notes[(size_t)j].view != view) j += dir > 0 ? 1 : -1;
-    if (j < 0 || j >= (int)notes.size()) return false;
-    std::swap(notes[(size_t)i], notes[(size_t)j]);
-    touch();
-    return true;
+    int levels = levelCount(view);
+    int slot = slotOf(notes[(size_t)i].layer, levels);
+    int best = -1;
+    for (int j = 0; j < (int)notes.size(); j++) {
+        if (j == i || notes[(size_t)j].view != view || slotOf(notes[(size_t)j].layer, levels) != slot) continue;
+        if ((dir > 0 && j > i) || (dir < 0 && j < i)) {
+            if (best < 0 || (dir > 0 ? j < best : j > best)) best = j;
+        }
+    }
+    if (best >= 0) {
+        std::swap(notes[(size_t)i], notes[(size_t)best]);
+        touch();
+        return true;
+    }
+    if (dir > 0 && slot < levels) { notes[(size_t)i].layer = slot + 1; touch(); return true; }
+    if (dir < 0 && slot > 0) { notes[(size_t)i].layer = slot - 1; touch(); return true; }
+    return false;
 }
 
 bool Document::canMoveNote(int id, int dir) const {
     int i = noteIndex(notes, id);
     if (i < 0 || dir == 0) return false;
     int view = notes[(size_t)i].view;
-    int j = i + (dir > 0 ? 1 : -1);
-    while (j >= 0 && j < (int)notes.size() && notes[(size_t)j].view != view) j += dir > 0 ? 1 : -1;
-    return j >= 0 && j < (int)notes.size();
+    int levels = levelCount(view);
+    int slot = slotOf(notes[(size_t)i].layer, levels);
+    for (int j = 0; j < (int)notes.size(); j++) {
+        if (j == i || notes[(size_t)j].view != view || slotOf(notes[(size_t)j].layer, levels) != slot) continue;
+        if ((dir > 0 && j > i) || (dir < 0 && j < i)) return true;
+    }
+    return dir > 0 ? slot < levels : slot > 0;
 }
 
 bool Document::moveAnno(int id, int dir) {
     int i = annoIndex(annos, id);
     if (i < 0 || dir == 0) return false;
     int view = annos[(size_t)i].view;
-    int j = i + (dir > 0 ? 1 : -1);
-    while (j >= 0 && j < (int)annos.size() && annos[(size_t)j].view != view) j += dir > 0 ? 1 : -1;
-    if (j < 0 || j >= (int)annos.size()) return false;
-    std::swap(annos[(size_t)i], annos[(size_t)j]);
-    touch();
-    return true;
+    int levels = levelCount(view);
+    int slot = slotOf(annos[(size_t)i].layer, levels);
+    int best = -1;
+    for (int j = 0; j < (int)annos.size(); j++) {
+        if (j == i || annos[(size_t)j].view != view || slotOf(annos[(size_t)j].layer, levels) != slot) continue;
+        if ((dir > 0 && j > i) || (dir < 0 && j < i)) {
+            if (best < 0 || (dir > 0 ? j < best : j > best)) best = j;
+        }
+    }
+    if (best >= 0) {
+        std::swap(annos[(size_t)i], annos[(size_t)best]);
+        touch();
+        return true;
+    }
+    if (dir > 0 && slot < levels) { annos[(size_t)i].layer = slot + 1; touch(); return true; }
+    if (dir < 0 && slot > 0) { annos[(size_t)i].layer = slot - 1; touch(); return true; }
+    return false;
 }
 
 bool Document::canMoveAnno(int id, int dir) const {
     int i = annoIndex(annos, id);
     if (i < 0 || dir == 0) return false;
     int view = annos[(size_t)i].view;
-    int j = i + (dir > 0 ? 1 : -1);
-    while (j >= 0 && j < (int)annos.size() && annos[(size_t)j].view != view) j += dir > 0 ? 1 : -1;
-    return j >= 0 && j < (int)annos.size();
+    int levels = levelCount(view);
+    int slot = slotOf(annos[(size_t)i].layer, levels);
+    for (int j = 0; j < (int)annos.size(); j++) {
+        if (j == i || annos[(size_t)j].view != view || slotOf(annos[(size_t)j].layer, levels) != slot) continue;
+        if ((dir > 0 && j > i) || (dir < 0 && j < i)) return true;
+    }
+    return dir > 0 ? slot < levels : slot > 0;
 }
 
 void Document::normalizeGroups() {
@@ -459,6 +512,7 @@ Json Document::toJson(bool full, bool withImages) const {
         o.set("text", n.text);
         if (std::fabs(n.textSize - kNoteTextSize) > 0.01f) o.set("textSize", (double)n.textSize);
         if (n.hidden) o.set("hidden", true);
+        if (n.layer) o.set("layer", n.layer);
         narr.push(o);
     }
     j.set("notes_", narr);
@@ -617,6 +671,7 @@ bool Document::fromJson(const Json& j, std::string* err) {
         n.text = o["text"].str();
         n.textSize = o.has("textSize") ? std::clamp(o["textSize"].f(kNoteTextSize), 24.f, 400.f) : kNoteTextSize;
         n.hidden = o["hidden"].boolean();
+        n.layer = std::max(0, o["layer"].i());
         maxId = std::max(maxId, n.id);
         d.notes.push_back(n);
     }

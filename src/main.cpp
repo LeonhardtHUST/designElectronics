@@ -57,6 +57,7 @@ int check(bool ok, const char* what, int& failures) {
 void annoTests(int& failures);
 void hierarchyTests(int& failures);
 void decorationLayerTests(int& failures);
+void decorationStackTests(int& failures);
 void hitTests(int& failures);
 void configTests(int& failures);
 void partCopyTests(int& failures);
@@ -1885,6 +1886,7 @@ int selftest() {
     annoTests(failures);
     hierarchyTests(failures);
     decorationLayerTests(failures);
+    decorationStackTests(failures);
     hitTests(failures);
     textSelectionTests(failures);
     inlineAnnoTests(failures);
@@ -2103,6 +2105,44 @@ void decorationLayerTests(int& failures) {
     bool ok = back.deserialize(d.serialize(true), &err);
     check(ok && back.note(n1) && back.note(n1)->hidden && back.note(n2) && !back.note(n2)->hidden,
           "a hidden note survives save and load", failures);
+}
+
+// ---- decorations can sit between component levels ----
+void decorationStackTests(int& failures) {
+    printf("Decoration stack\n");
+    Document d;
+    examples()[0].build(d);
+    int levels = d.levelCount(BB);
+    check(levels >= 2, "the example has component levels to interleave", failures);
+    if (levels < 2) return;
+
+    Note n;
+    n.id = d.newId();
+    n.view = BB;
+    n.pos = {0, 0};
+    n.text = "label";
+    d.notes.push_back(n);
+    int id = n.id;
+    check(d.note(id)->layer == 0, "a new note starts under the components", failures);
+    check(d.canMoveNote(id, +1) && d.moveNote(id, +1) && d.note(id)->layer == 1,
+          "a note moves above the first component level", failures);
+    while (d.canMoveNote(id, +1)) d.moveNote(id, +1);
+    check(d.note(id)->layer == levels, "a note can move above every component", failures);
+
+    Anno a;
+    a.id = d.newId();
+    a.view = BB;
+    a.kind = AnnoKind::Rect;
+    a.a = {0, 0};
+    a.b = {100, 100};
+    a.layer = 1;
+    d.annos.push_back(a);
+    int aid = a.id;
+    std::string err;
+    Document back;
+    bool ok = back.deserialize(d.serialize(true), &err);
+    check(ok && back.anno(aid) && back.anno(aid)->layer == 1 && back.note(id) && back.note(id)->layer == levels,
+          "decoration layers survive save and load", failures);
 }
 
 // ---- hierarchy: groups are levels, and groups never nest ----
