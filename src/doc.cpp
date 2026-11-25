@@ -237,6 +237,57 @@ bool Document::canMoveLevel(int partId, int dir) const {
     return s > 0;
 }
 
+static int noteIndex(const std::vector<Note>& v, int id) {
+    for (size_t i = 0; i < v.size(); i++) if (v[i].id == id) return (int)i;
+    return -1;
+}
+static int annoIndex(const std::vector<Anno>& v, int id) {
+    for (size_t i = 0; i < v.size(); i++) if (v[i].id == id) return (int)i;
+    return -1;
+}
+
+bool Document::moveNote(int id, int dir) {
+    int i = noteIndex(notes, id);
+    if (i < 0 || dir == 0) return false;
+    int view = notes[(size_t)i].view;
+    int j = i + (dir > 0 ? 1 : -1);
+    while (j >= 0 && j < (int)notes.size() && notes[(size_t)j].view != view) j += dir > 0 ? 1 : -1;
+    if (j < 0 || j >= (int)notes.size()) return false;
+    std::swap(notes[(size_t)i], notes[(size_t)j]);
+    touch();
+    return true;
+}
+
+bool Document::canMoveNote(int id, int dir) const {
+    int i = noteIndex(notes, id);
+    if (i < 0 || dir == 0) return false;
+    int view = notes[(size_t)i].view;
+    int j = i + (dir > 0 ? 1 : -1);
+    while (j >= 0 && j < (int)notes.size() && notes[(size_t)j].view != view) j += dir > 0 ? 1 : -1;
+    return j >= 0 && j < (int)notes.size();
+}
+
+bool Document::moveAnno(int id, int dir) {
+    int i = annoIndex(annos, id);
+    if (i < 0 || dir == 0) return false;
+    int view = annos[(size_t)i].view;
+    int j = i + (dir > 0 ? 1 : -1);
+    while (j >= 0 && j < (int)annos.size() && annos[(size_t)j].view != view) j += dir > 0 ? 1 : -1;
+    if (j < 0 || j >= (int)annos.size()) return false;
+    std::swap(annos[(size_t)i], annos[(size_t)j]);
+    touch();
+    return true;
+}
+
+bool Document::canMoveAnno(int id, int dir) const {
+    int i = annoIndex(annos, id);
+    if (i < 0 || dir == 0) return false;
+    int view = annos[(size_t)i].view;
+    int j = i + (dir > 0 ? 1 : -1);
+    while (j >= 0 && j < (int)annos.size() && annos[(size_t)j].view != view) j += dir > 0 ? 1 : -1;
+    return j >= 0 && j < (int)annos.size();
+}
+
 void Document::normalizeGroups() {
     std::map<int, int> count;
     for (auto& p : parts) if (p.group > 0) count[p.group]++;
@@ -407,6 +458,7 @@ Json Document::toJson(bool full, bool withImages) const {
         o.set("size", vec(n.size));
         o.set("text", n.text);
         if (std::fabs(n.textSize - kNoteTextSize) > 0.01f) o.set("textSize", (double)n.textSize);
+        if (n.hidden) o.set("hidden", true);
         narr.push(o);
     }
     j.set("notes_", narr);
@@ -564,6 +616,7 @@ bool Document::fromJson(const Json& j, std::string* err) {
         n.size = o.has("size") ? vecOf(o["size"]) : Vec2(1500, 800);
         n.text = o["text"].str();
         n.textSize = o.has("textSize") ? std::clamp(o["textSize"].f(kNoteTextSize), 24.f, 400.f) : kNoteTextSize;
+        n.hidden = o["hidden"].boolean();
         maxId = std::max(maxId, n.id);
         d.notes.push_back(n);
     }

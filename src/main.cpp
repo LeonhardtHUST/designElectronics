@@ -56,6 +56,7 @@ int check(bool ok, const char* what, int& failures) {
 // Defined below the example loop, declared here so selftest() can call it.
 void annoTests(int& failures);
 void hierarchyTests(int& failures);
+void decorationLayerTests(int& failures);
 void hitTests(int& failures);
 void configTests(int& failures);
 void partCopyTests(int& failures);
@@ -1883,6 +1884,7 @@ int selftest() {
     layerTests(failures);
     annoTests(failures);
     hierarchyTests(failures);
+    decorationLayerTests(failures);
     hitTests(failures);
     textSelectionTests(failures);
     inlineAnnoTests(failures);
@@ -2042,6 +2044,65 @@ void annoTests(int& failures) {
         annoFitText(pt, gfx);
         check(pt.b.x > pointBefore.x && pt.b.y > pointBefore.y, "a point text grows with its text size", failures);
     }
+}
+
+// ---- notes and annotations are layers too: hidden state and front/back order ----
+void decorationLayerTests(int& failures) {
+    printf("Decoration layers\n");
+    Document d;
+    d.title = "decoration layers";
+    auto addNote = [&](Vec2 at, const std::string& text, int view) {
+        Note n;
+        n.id = d.newId();
+        n.view = view;
+        n.pos = at;
+        n.text = text;
+        d.notes.push_back(n);
+        return n.id;
+    };
+    auto addAnno = [&](Vec2 a, Vec2 b, int view) {
+        Anno an;
+        an.id = d.newId();
+        an.view = view;
+        an.kind = AnnoKind::Rect;
+        an.a = a;
+        an.b = b;
+        d.annos.push_back(an);
+        return an.id;
+    };
+    int n1 = addNote({0, 0}, "first", BB);
+    int n2 = addNote({0, 300}, "second", BB);
+    int n3 = addNote({0, 600}, "third", BB);
+    addNote({0, 900}, "other view", SCH);
+    int a1 = addAnno({0, 0}, {100, 100}, BB);
+    int a2 = addAnno({0, 200}, {100, 300}, BB);
+
+    bool moved = d.moveNote(n2, +1);
+    int ni = -1, nj = -1;
+    for (size_t i = 0; i < d.notes.size(); i++) {
+        if (d.notes[i].id == n2) ni = (int)i;
+        if (d.notes[i].id == n3) nj = (int)i;
+    }
+    check(moved && ni > nj, "a note moves towards the front", failures);
+    check(!d.canMoveNote(n2, +1) && !d.moveNote(n2, +1),
+          "a note cannot move past the last note of its view", failures);
+
+    bool annoMoved = d.moveAnno(a1, +1);
+    int ai = -1, aj = -1;
+    for (size_t i = 0; i < d.annos.size(); i++) {
+        if (d.annos[i].id == a1) ai = (int)i;
+        if (d.annos[i].id == a2) aj = (int)i;
+    }
+    check(annoMoved && ai > aj, "an annotation moves towards the front", failures);
+    check(!d.canMoveAnno(a1, +1) && !d.moveAnno(a1, +1),
+          "an annotation cannot move past the last one of its view", failures);
+
+    d.note(n1)->hidden = true;
+    std::string err;
+    Document back;
+    bool ok = back.deserialize(d.serialize(true), &err);
+    check(ok && back.note(n1) && back.note(n1)->hidden && back.note(n2) && !back.note(n2)->hidden,
+          "a hidden note survives save and load", failures);
 }
 
 // ---- hierarchy: groups are levels, and groups never nest ----

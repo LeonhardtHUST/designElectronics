@@ -561,12 +561,14 @@ void drawAnno(Gfx& g, const Anno& a, Vec2 pan, float zoom, float uiScale, bool s
             }
             float lh = px * 1.35f;
             Vec2 o = S(a.a);
-            float bottom = o.y + std::max(1.f, a.b.y) * zoom;
+            Rect frame(o.x, o.y, std::max(1.f, a.b.x) * zoom, std::max(1.f, a.b.y) * zoom);
+            g.pushClip(frame);  // a text box clips its glyphs, exactly as its frame does
             for (size_t i = 0; i < lines.size(); i++) {
                 float y = o.y + yoff + lh * ((float)i + 0.5f);
-                if (y - lh * 0.5f > bottom) break;  // the box clips the text, as on screen
+                if (y - lh * 0.5f > frame.b()) break;
                 g.text({o.x + xoff, y}, lines[i], px, col, 0, a.font);
             }
+            g.popClip();
             break;
         }
     }

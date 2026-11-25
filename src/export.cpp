@@ -508,7 +508,7 @@ std::string exportSvg(const Document& doc, const Connectivity& conn, int view) {
         for (auto& w : doc.wires) if (w.view == view) drawWire(w);
     }
     for (auto& n : doc.notes) {
-        if (n.view != view) continue;
+        if (n.view != view || n.hidden) continue;
         snprintf(b, sizeof b, "<rect x=\"%.1f\" y=\"%.1f\" width=\"%.1f\" height=\"%.1f\" fill=\"#fff6b0\" stroke=\"#d8c860\" stroke-width=\"6\"/>\n", n.pos.x, n.pos.y, n.size.x, n.size.y);
         o += b;
         snprintf(b, sizeof b, "<text x=\"%.1f\" y=\"%.1f\" font-family=\"Sarasa Gothic SC, Noto Sans SC, Microsoft YaHei, PingFang SC, sans-serif\" font-size=\"%.1f\" fill=\"#333\">", n.pos.x + 40, n.pos.y + 40 + n.textSize * 0.86, n.textSize);

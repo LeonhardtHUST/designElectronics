@@ -101,8 +101,15 @@ pin, or within 3 mil of another wire end in the same view, connects to it.
 ## Notes
 
 ```jsonc
-{ "id": 13, "view": "breadboard", "at": [0, -1100], "size": [2200, 600], "text": "Hello" }
+{ "id": 13, "view": "breadboard", "at": [0, -1100], "size": [2200, 600], "text": "Hello",
+  "textSize": 108, "hidden": false }  // textSize: world units; hidden: Layers panel eye
 ```
+
+Notes and annotations are layers too: each one can be selected, hidden and moved
+front/back from the Layers panel. Array order is the stacking order (later entries
+draw nearer the front, within their view). The bands stay fixed: wires draw above
+components, components above annotations, annotations above notes, so markup never
+hides a pin.
 
 ## Annotations
 

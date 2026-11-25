@@ -21,7 +21,7 @@ Rect worldExtent(const Document& doc, int v, bool* any) {
     auto add = [&](Rect r) { b = *any ? b.united(r) : r; *any = true; };
     for (auto& p : doc.parts) if (p.inView(v)) add(p.worldBounds(v));
     for (auto& w : doc.wires) if (w.view == v) for (auto& pt : w.pts) add(Rect(pt.x, pt.y, 0, 0));
-    for (auto& n : doc.notes) if (n.view == v) add(Rect(n.pos.x, n.pos.y, n.size.x, n.size.y));
+    for (auto& n : doc.notes) if (n.view == v && !n.hidden) add(Rect(n.pos.x, n.pos.y, n.size.x, n.size.y));
     // Markup counts as content: fitting the view must not clip an annotation away.
     for (auto& a : doc.annos) if (a.view == v && !a.hidden) add(annoBounds(a));
     return b;
@@ -137,7 +137,7 @@ void App::collectHits(Vec2 s, std::vector<HitCand>& out) {
     // 0 — handles of the current selection: note corner, annotation resize point
     if (layerShown(view, LY_NOTES)) {
         for (auto& n : doc.notes) {
-            if (n.view != view) continue;
+            if (n.view != view || n.hidden) continue;
             Vec2 corner = n.pos + n.size;
             float tol = hitRadius(view, 0) * 1.5f;
             if (dist(corner, w) <= tol) {
@@ -255,7 +255,7 @@ void App::collectHits(Vec2 s, std::vector<HitCand>& out) {
     if (layerShown(view, LY_NOTES)) {
         for (int i = (int)doc.notes.size() - 1; i >= 0; i--) {
             const Note& n = doc.notes[(size_t)i];
-            if (n.view != view) continue;
+            if (n.view != view || n.hidden) continue;
             if (!Rect(n.pos.x, n.pos.y, n.size.x, n.size.y).contains(w)) continue;
             Hit h;
             h.kind = Hit::NOTE;
@@ -675,7 +675,7 @@ void App::finishPointer() {
                 if (wr.view != view || !wireShown(wr)) continue;
                 for (auto& pt : wr.pts) if (r.contains(pt)) { selWires.insert(wr.id); break; }
             }
-            for (auto& n : doc.notes) if (n.view == view && layerShown(view, LY_NOTES) && r.overlaps(Rect(n.pos.x, n.pos.y, n.size.x, n.size.y))) selNotes.insert(n.id);
+            for (auto& n : doc.notes) if (n.view == view && !n.hidden && layerShown(view, LY_NOTES) && r.overlaps(Rect(n.pos.x, n.pos.y, n.size.x, n.size.y))) selNotes.insert(n.id);
             for (auto& a : doc.annos) if (a.view == view && !a.hidden && layerShown(view, LY_ANNO) && r.overlaps(annoBounds(a))) selAnnos.insert(a.id);
             break;
         }
@@ -1433,7 +1433,7 @@ void App::drawCanvas(int v, const Camera& c, Rect vp, bool exporting) {
 
     // notes
     for (auto& n : doc.notes) {
-        if (n.view != v || (!exporting && !layerShown(v, LY_NOTES))) continue;
+        if (n.view != v || n.hidden || (!exporting && !layerShown(v, LY_NOTES))) continue;
         Rect r(S(n.pos).x, S(n.pos).y, n.size.x * z, n.size.y * z);
         g.fillRect(Rect(r.x + 3 * s, r.y + 4 * s, r.w, r.h), rgba(0, 0, 0, 30));
         g.fillRect(r, rgba(255, 246, 176));
@@ -1441,11 +1441,13 @@ void App::drawCanvas(int v, const Camera& c, Rect vp, bool exporting) {
         float px = n.textSize * z;
         if (px >= 5) {
             auto lines = wrapText(g, n.text, px, r.w - 80 * z);
+            g.pushClip(r);  // a note is a box: its text never spills over the paper
             for (size_t i = 0; i < lines.size(); i++) {
                 float y = r.y + 40 * z + px * 1.3f * ((float)i + 0.5f);
                 if (y > r.b() - px * 0.5f) break;
                 g.text({r.x + 40 * z, y}, lines[i], px, rgba(60, 50, 20), 0);
             }
+            g.popClip();
         }
         if (selVisible && selNotes.count(n.id)) {
             g.strokeRect(r.inset(-3 * s), 2 * s, kSel);

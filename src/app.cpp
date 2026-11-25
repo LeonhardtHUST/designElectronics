@@ -1018,6 +1018,7 @@ void App::paste() {
         Note n = nt;
         n.id = doc.newId();
         n.pos += off;
+        n.hidden = false;  // a pasted note is visible again, like a pasted part leaves its group
         doc.notes.push_back(n);
         selNotes.insert(n.id);
     }
@@ -1045,7 +1046,7 @@ void App::selectAll() {
     selParts.clear(); selWires.clear(); selNotes.clear(); selAnnos.clear();
     for (auto& p : doc.parts) if (p.inView(view)) selParts.insert(p.id);
     for (auto& w : doc.wires) if (w.view == view) selWires.insert(w.id);
-    for (auto& n : doc.notes) if (n.view == view) selNotes.insert(n.id);
+    for (auto& n : doc.notes) if (n.view == view && !n.hidden) selNotes.insert(n.id);
     for (auto& a : doc.annos) if (a.view == view && !a.hidden) selAnnos.insert(a.id);
 }
 

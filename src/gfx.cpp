@@ -216,6 +216,29 @@ void Gfx::setClip(const Rect* r) {
     SDL_SetRenderClipRect(r_, &c);
 }
 
+void Gfx::pushClip(const Rect& r) {
+    SDL_Rect current{};
+    bool enabled = SDL_RenderClipEnabled(r_) && SDL_GetRenderClipRect(r_, &current);
+    Rect prev((float)current.x, (float)current.y, (float)current.w, (float)current.h);
+    bool had = enabled && current.w > 0 && current.h > 0;
+    savedClips_.push_back({prev, had});
+    Rect c = r;
+    if (had) {
+        float x0 = std::max(prev.x, r.x), y0 = std::max(prev.y, r.y);
+        float x1 = std::min(prev.r(), r.r()), y1 = std::min(prev.b(), r.b());
+        c = Rect(x0, y0, std::max(0.f, x1 - x0), std::max(0.f, y1 - y0));
+    }
+    setClip(&c);
+}
+
+void Gfx::popClip() {
+    if (savedClips_.empty()) return;
+    SavedClip saved = savedClips_.back();
+    savedClips_.pop_back();
+    if (saved.on) setClip(&saved.r);
+    else setClip(nullptr);
+}
+
 void Gfx::vtx(Vec2 p, uint32_t c) {
     SDL_Vertex v;
     v.position = {p.x, p.y};

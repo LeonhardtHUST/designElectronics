@@ -79,6 +79,7 @@ struct Note {
     Vec2 size{1500, 800};
     std::string text;
     float textSize = kNoteTextSize;
+    bool hidden = false;  // hidden in the Layers panel; the design keeps the note
 };
 
 struct DesignRules {
@@ -147,6 +148,13 @@ public:
     bool moveLevel(int partId, int dir);            // dir +1 = towards the front
     bool canMoveLevel(int partId, int dir) const;
     void normalizeGroups();                         // dissolve groups left with <2 members
+
+    // Notes and annotations are layers too: each one moves within its own band (notes
+    // under annotations), and only among the entries of its view. dir +1 = towards the front.
+    bool moveNote(int id, int dir);
+    bool canMoveNote(int id, int dir) const;
+    bool moveAnno(int id, int dir);
+    bool canMoveAnno(int id, int dir) const;
 
     PartInst& addPart(const std::string& type, const Props& props, Vec2 posAllViews);
     void removePart(int id);

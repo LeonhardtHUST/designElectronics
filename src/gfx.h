@@ -23,6 +23,10 @@ public:
 
     void flush();
     void setClip(const Rect* r);
+    // Nested clipping for a single drawable (a text box clips its glyphs): the requested
+    // rectangle is intersected with whatever clip is active and restored by popClip().
+    void pushClip(const Rect& r);
+    void popClip();
 
     // primitives (pixel coordinates)
     void fillRect(Rect r, uint32_t c);
@@ -71,6 +75,8 @@ private:
     };
     std::unordered_map<std::string, TextEntry> textCache_;
     std::list<std::string> lru_;
+    struct SavedClip { Rect r; bool on = false; };
+    std::vector<SavedClip> savedClips_;
 
     TTF_Font* font(FontFace face, int px);
     TextEntry* textEntry(const std::string& s, int px, FontFace face);

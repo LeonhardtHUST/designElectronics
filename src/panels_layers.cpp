@@ -95,21 +95,32 @@ void App::drawLayers(Rect r) {
     if (!sameLevel) rep = -1;
     bool canGroup = ungrouped >= 2 && grouped == 0;
     bool canUngroup = grouped > 0;
-    bool canUp = rep >= 0 && doc.canMoveLevel(rep, +1);
-    bool canDown = rep >= 0 && doc.canMoveLevel(rep, -1);
+    // Notes and annotations are layers too: with no component selected, move the one
+    // decoration that is selected within its own band.
+    int selAnno = selAnnos.size() == 1 ? *selAnnos.begin() : -1;
+    int selNote = selNotes.size() == 1 ? *selNotes.begin() : -1;
+    bool partLevel = rep >= 0;
+    bool annoLevel = !partLevel && selAnno > 0;
+    bool noteLevel = !partLevel && !annoLevel && selNote > 0;
+    bool canUp = partLevel ? doc.canMoveLevel(rep, +1) : annoLevel ? doc.canMoveAnno(selAnno, +1) : noteLevel ? doc.canMoveNote(selNote, +1) : false;
+    bool canDown = partLevel ? doc.canMoveLevel(rep, -1) : annoLevel ? doc.canMoveAnno(selAnno, -1) : noteLevel ? doc.canMoveNote(selNote, -1) : false;
 
     float gap = 4 * s;
     float bw = (r.w - 2 * pad - 3 * gap) / 4;
     Rect b(r.x + pad, y, bw, 28 * s);
     if (ui.button("lh-up", b, tr("layers.move_up"), BTN_NORMAL, false, canUp) && canUp) {
         checkpoint();
-        doc.moveLevel(rep, +1);
+        if (partLevel) doc.moveLevel(rep, +1);
+        else if (annoLevel) doc.moveAnno(selAnno, +1);
+        else doc.moveNote(selNote, +1);
         changed();
     }
     b.x += bw + gap;
     if (ui.button("lh-down", b, tr("layers.move_down"), BTN_NORMAL, false, canDown) && canDown) {
         checkpoint();
-        doc.moveLevel(rep, -1);
+        if (partLevel) doc.moveLevel(rep, -1);
+        else if (annoLevel) doc.moveAnno(selAnno, -1);
+        else doc.moveNote(selNote, -1);
         changed();
     }
     b.x += bw + gap;
@@ -199,7 +210,20 @@ void App::drawLayers(Rect r) {
     for (auto& n : doc.notes) if (n.view == view) nNotes++;
     for (auto& a : doc.annos) if (a.view == view) nAnnos++;
     if (f.empty() && nWires) rows.push_back({3, kGroupWires, 0});
-    if (f.empty() && nNotes) rows.push_back({4, kGroupNotes, 0});
+    if (f.empty() && nNotes) {
+        rows.push_back({4, kGroupNotes, 0});
+        if (!layerCollapsed.count(kGroupNotes))
+            for (int i = (int)doc.notes.size() - 1; i >= 0; i--) {
+                const Note& n = doc.notes[(size_t)i];
+                if (n.view == view) rows.push_back({7, n.id, 1});
+            }
+    }
+    if (!f.empty()) {
+        for (int i = (int)doc.notes.size() - 1; i >= 0; i--) {
+            const Note& n = doc.notes[(size_t)i];
+            if (n.view == view && lower(n.text).find(f) != std::string::npos) rows.push_back({7, n.id, 0});
+        }
+    }
     if (f.empty() && nAnnos) {
         rows.push_back({5, kGroupAnnos, 0});
         if (!layerCollapsed.count(kGroupAnnos))
@@ -307,17 +331,28 @@ void App::drawLayers(Rect r) {
                 // select everything in the group
                 selParts.clear(); selWires.clear(); selNotes.clear(); selAnnos.clear();
                 if (wiresGroup) { for (auto& w : doc.wires) if (w.view == view && wireShown(w)) selWires.insert(w.id); }
-                else for (auto& n : doc.notes) if (n.view == view) selNotes.insert(n.id);
+                else for (auto& n : doc.notes) if (n.view == view && !n.hidden) selNotes.insert(n.id);
             }
             Rect eye(right - 26 * s, rr.center().y - 13 * s, 26 * s, 26 * s);
             if (iconToggle(ui, "leye-" + id, eye, on ? "eye" : "eyeoff", on ? th.text : th.textDim, tr(on ? "layers.hide" : "layers.show"))) {
                 if (view == PCB && wiresGroup) layerOff[PCB][LY_COPPER_TOP] = layerOff[PCB][LY_COPPER_BOTTOM] = on;
                 else layerOff[view][layer] = on;
             }
-            ui.drawIcon(wiresGroup ? "wire" : "note", Rect(x, rr.center().y - 11 * s, 22 * s, 22 * s), on ? th.textDim : withAlpha(th.textDim, 120));
+            float iconX = x;
+            if (!wiresGroup) {
+                bool coll = layerCollapsed.count(kGroupNotes) > 0;
+                Rect ch(x - 4 * s, rr.center().y - 10 * s, 20 * s, 20 * s);
+                if (ui.button("lcol-nt", ch, "", BTN_FLAT)) {
+                    if (coll) layerCollapsed.erase(kGroupNotes);
+                    else layerCollapsed.insert(kGroupNotes);
+                }
+                ui.drawIcon(coll ? "chevright" : "chevron", ch.inset(2 * s), th.textDim);
+                iconX = x + 18 * s;
+            }
+            ui.drawIcon(wiresGroup ? "wire" : "note", Rect(iconX, rr.center().y - 11 * s, 22 * s, 22 * s), on ? th.textDim : withAlpha(th.textDim, 120));
             std::string t = trf(wiresGroup ? (view == PCB ? "layers.traces_count" : "layers.wires_count") : "layers.notes_count",
                                 {std::to_string(wiresGroup ? nWires : nNotes)});
-            g.text({x + 32 * s, rr.center().y}, t, 14 * s, on ? th.text : th.textDim, 0);
+            g.text({iconX + 32 * s, rr.center().y}, t, 14 * s, on ? th.text : th.textDim, 0);
             continue;
         }
         if (row.kind == 5) {  // annotations group
@@ -378,6 +413,35 @@ void App::drawLayers(Rect r) {
                                      : tr("anno.image_missing"));
             }
             g.text({tx2, rr.center().y}, g.ellipsize(name, 14 * s, eye.x - tx2 - 6 * s), 14 * s, a->hidden ? th.textDim : th.text, 0);
+            continue;
+        }
+
+        if (row.kind == 7) {  // one note
+            Note* n = doc.note(row.id);
+            if (!n) continue;
+            bool sel = selNotes.count(n->id) > 0;
+            if (sel) g.fillRoundRect(rr, 6 * s, withAlpha(th.accent, 40));
+            std::string rid = std::to_string(n->id);
+            if (ui.button("lrow-nt" + rid, rr, "", BTN_FLAT, sel)) {
+                if (in.shift()) { if (sel) selNotes.erase(n->id); else selNotes.insert(n->id); }
+                else { selNotes = {n->id}; selParts.clear(); selWires.clear(); selAnnos.clear(); }
+                if (n->hidden) selNotes.erase(n->id);
+            }
+            Rect eye(right - 26 * s, rr.center().y - 13 * s, 26 * s, 26 * s);
+            if (iconToggle(ui, "leye-nt" + rid, eye, n->hidden ? "eyeoff" : "eye", n->hidden ? th.textDim : th.text,
+                           n->hidden ? trf("layers.show_in", {viewLabel(view)}) : trf("layers.hide_in", {viewLabel(view)}))) {
+                checkpoint();
+                n->hidden = !n->hidden;
+                if (n->hidden) selNotes.erase(n->id);
+                changed();
+            }
+            Rect icon(x + 4 * s, rr.center().y - 10 * s, 20 * s, 20 * s);
+            ui.drawIcon("note", icon, n->hidden ? th.textDim : th.text);
+            std::string first = n->text.substr(0, n->text.find('\n'));
+            std::string label = first.empty() ? tr("layers.note") : first;
+            float tx3 = icon.r() + 8 * s;
+            g.text({tx3, rr.center().y}, g.ellipsize(label, 13.5f * s, eye.x - tx3 - 6 * s), 13.5f * s,
+                   n->hidden ? th.textDim : th.text, 0);
             continue;
         }
 
