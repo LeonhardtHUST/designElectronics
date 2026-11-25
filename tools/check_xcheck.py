@@ -10,10 +10,9 @@ fixture broke, and a report whose ngspice values are all identical is the signat
 import re
 import sys
 
-# Expected model-fidelity deviations, not harness failures: the exported SPICE models are generic
-# (one LED diode model for every colour, a fixed resistor for the light-dependent photocell), so
-# those rows are allowed to be BAD. Anything else turning BAD is a regression.
-EXPECTED_BAD = {"Blue LED limiter", "Green LED limiter", "Photocell divider"}
+# No model-fidelity exemptions left: LEDs and the photocell export their real-time parameters, so
+# every row must now land within 10 % (or the 50 mV near-zero rule). A BAD row is a regression.
+EXPECTED_BAD = set()
 
 
 def cells(line):

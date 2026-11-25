@@ -31,6 +31,16 @@ void spiceExportTests(int& failures) {
     SpiceNetlist net = buildSpice(d, cn, tr);
     expect(has(net.text, ".tran") && has(net.text, "L") && has(net.text, "M") && has(net.text, "Q") && has(net.text, "R") && has(net.text, ".end"), "TRAN and analog device elements export");
     expect(has(net.text, "min(max("), "regulator output clamps at its rated voltage");
+    Document leds;
+    leds.addPart("led", {{"color", "Red"}}, {0, 0});
+    leds.addPart("led", {{"color", "Green"}}, {500, 0});
+    leds.addPart("photocell", {{"light", "50"}}, {1000, 0});
+    Connectivity ledConn;
+    ledConn.build(leds);
+    SpiceNetlist ledNet = buildSpice(leds, ledConn, tr);
+    expect(has(ledNet.text, "led_model_red") && has(ledNet.text, "led_model_green") &&
+               !has(ledNet.text, "led_model_blue"), "LED colours get their own diode parameters");
+    expect(has(ledNet.text, "31622"), "photocell exports its light-dependent resistance");
     expect(has(net.text, "Rs1_") && has(net.text, "Rs2_"), "switch and pushbutton pin mapping export");
     expect(!has(net.text, " nc "), "no invalid NC nodes export");
     SpiceOptions ac;

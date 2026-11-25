@@ -251,6 +251,9 @@ ard::BoardInfo boardInfoFor(const PartDef& d, double vio) {
 
 }  // namespace
 
+// Public name for the LED forward voltage used by the SPICE export as well.
+double ledForwardVoltage(const std::string& color) { return ledVf(color); }
+
 // ---------------------------------------------------------------------------
 // Simulator
 // ---------------------------------------------------------------------------

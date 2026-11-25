@@ -210,9 +210,9 @@ int spiceCrossCheck(const std::string& outMarkdownPath) {
     out << "two engines disagree.\n\n";
     out << "The fixtures are built by `--spice-xcheck` itself (see `src/spice_xcheck.cpp`): a 9 V battery,\n";
     out << "a series resistor and the device under test, with the observed node on the device's own pin.\n";
-    out << "The exported SPICE models are deliberately generic: LEDs share one diode model regardless of\n";
-    out << "colour, and the photocell is a fixed resistor, so those rows are expected to deviate from the\n";
-    out << "real-time engine, which models the colour- and light-dependent behaviour.\n";
+    out << "LEDs get per-colour diode parameters and the photocell exports a light-dependent resistor,\n";
+    out << "both derived from the real-time model, so agreement is expected except for differences in\n";
+    out << "model shape (exponential junction versus fixed forward drop).\n";
     return 0;
 }
 #else

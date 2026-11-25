@@ -6,15 +6,15 @@ Backend: `available`
 
 | Circuit | Observable | Real-time | ngspice | Absolute error | Relative error | Verdict |
 |---|---|---:|---:|---:|---:|---|
-| Blue LED limiter | V(LED) | 3.184995 | 2.070642 | 1.114353 | 53.82% | `BAD` |
-| Photocell divider | V(sense) | 6.837424 | 8.910891 | 2.073467 | 23.27% | `BAD` |
-| Green LED limiter | V(LED) | 2.409661 | 2.070642 | 0.339019 | 16.37% | `BAD` |
 | Diode clamp | V(diode) | 0.701657 | 0.680096 | 0.021561 | 3.17% | `WARN` |
-| Red LED limiter | V(LED) | 2.021994 | 2.070642 | 0.048648 | 2.35% | `WARN` |
+| Blue LED limiter | V(LED) | 3.184995 | 3.173819 | 0.011175 | 0.35% | `OK` |
 | PNP high side | V(collector) | 8.972016 | 8.961467 | 0.010548 | 0.12% | `OK` |
 | Resistor divider | V(load) | 4.496625 | 4.500000 | 0.003375 | 0.07% | `OK` |
+| Green LED limiter | V(LED) | 2.409661 | 2.408002 | 0.001658 | 0.07% | `OK` |
+| Red LED limiter | V(LED) | 2.021994 | 2.023169 | 0.001175 | 0.06% | `OK` |
 | Potentiometer | V(wiper) | 3.213759 | 3.214286 | 0.000526 | 0.02% | `OK` |
 | 7805 regulator | V(out) | 4.999750 | 5.000000 | 0.000250 | 0.00% | `OK` |
+| Photocell divider | V(sense) | 6.837424 | 6.837724 | 0.000300 | 0.00% | `OK` |
 | RC charging | V(cap) | 8.999991 | 9.000000 | 0.000009 | 0.00% | `OK` |
 | Inductor | V(inductor) | 0.004431 | -0.000000 | 0.004431 | 0.00% | `OK` |
 | NPN switch | V(collector) | 0.008972 | 0.038533 | 0.029561 | 0.00% | `OK` |
@@ -29,6 +29,6 @@ two engines disagree.
 
 The fixtures are built by `--spice-xcheck` itself (see `src/spice_xcheck.cpp`): a 9 V battery,
 a series resistor and the device under test, with the observed node on the device's own pin.
-The exported SPICE models are deliberately generic: LEDs share one diode model regardless of
-colour, and the photocell is a fixed resistor, so those rows are expected to deviate from the
-real-time engine, which models the colour- and light-dependent behaviour.
+LEDs get per-colour diode parameters and the photocell exports a light-dependent resistor,
+both derived from the real-time model, so agreement is expected except for differences in
+model shape (exponential junction versus fixed forward drop).

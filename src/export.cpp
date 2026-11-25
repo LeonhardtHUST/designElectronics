@@ -736,8 +736,20 @@ SpiceNetlist buildSpice(const Document& doc, const Connectivity& conn, const Spi
             bool selected = opt.dcSource.empty() || opt.dcSource == "battery" || opt.dcSource == part.label || opt.dcSource == id;
             std::snprintf(line, sizeof line, "V%s %s %s DC %g%s\n", id.c_str(), node(part, "plus").c_str(), node(part, "minus").c_str(), voltage, opt.analysis == SpiceOptions::AC && selected ? " AC 1" : "");
         } else if (sim == "diode" || sim == "led") {
-            std::string name = sim == "led" ? "led_model" : "diode_model";
-            model(name, sim == "led" ? "D(IS=1e-20 N=1.9 RS=1)" : "D(IS=2.5n N=1.75 RS=0.04)");
+            std::string name = "diode_model";
+            if (sim == "led") {
+                // The real-time engine models an LED as a fixed forward drop plus 15 Ω. Give every
+                // colour its own diode parameters so the exported netlist lands on the same point.
+                const double rs = 15, is = 1e-20, typical = 0.015, vt = 0.025852;
+                double vf = ledForwardVoltage(part.prop("color"));
+                double n = vf / (vt * std::log(typical / is));
+                char body[96];
+                std::snprintf(body, sizeof body, "D(IS=%g N=%.4f RS=%g)", is, n, rs);
+                name = "led_model_" + clean(part.prop("color"));
+                model(name, body);
+            } else {
+                model("diode_model", "D(IS=2.5n N=1.75 RS=0.04)");
+            }
             std::snprintf(line, sizeof line, "D%s %s %s %s\n", id.c_str(), node(part, "anode").c_str(), node(part, "cathode").c_str(), name.c_str());
         } else if (sim == "npn" || sim == "pnp") {
             std::string name = sim == "npn" ? "npn_model" : "pnp_model";
@@ -784,7 +796,14 @@ SpiceNetlist buildSpice(const Document& doc, const Connectivity& conn, const Spi
             }
             result.skipped.push_back(part.label + ": board firmware omitted; external outputs exported");
             continue;
-        } else if (sim == "relay" || sim == "motor" || sim == "buzzer" || sim == "meter" || sim == "photocell" || sim == "tl431" || sim == "opto" || sim == "seg7" || sim == "rgbled" || sim == "leds") {
+        } else if (sim == "photocell") {
+            double light = std::atof(part.prop("light").c_str());
+            if (light < 0) light = 0;
+            if (light > 100) light = 100;
+            double r = 1e6 * std::pow(10.0, -3 * light / 100);
+            std::snprintf(line, sizeof line, "R%s %s %s %g\n", id.c_str(), pin(part, 0).c_str(), pin(part, 1).c_str(), r);
+            result.skipped.push_back(part.label + ": light-dependent resistor exported");
+        } else if (sim == "relay" || sim == "motor" || sim == "buzzer" || sim == "meter" || sim == "tl431" || sim == "opto" || sim == "seg7" || sim == "rgbled" || sim == "leds") {
             result.skipped.push_back(part.label + ": " + sim + " exported as approximation");
             std::snprintf(line, sizeof line, "R%s %s %s 1Meg\n", id.c_str(), pin(part, 0).c_str(), pin(part, 1).c_str());
         } else if (sim == "logic" || sim == "555" || sim == "mcu" || sim.empty()) {

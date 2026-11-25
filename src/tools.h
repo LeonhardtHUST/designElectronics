@@ -81,6 +81,10 @@ bool checkSketch(const PartInst& part, int& errorLine, std::string& error);
 // Convenience: run a fresh simulation for `seconds` and return the final state.
 SimResult simulate(const Document& doc, const Connectivity& conn, const std::set<int>& pressedButtons, double seconds = 0.5);
 
+// Forward voltage of an LED colour in the real-time junction model; the SPICE export uses the
+// same value so both engines agree at the operating point.
+double ledForwardVoltage(const std::string& color);
+
 // ---- exporters ----
 bool exportGerberZip(const Document& doc, const Connectivity& conn, const std::string& zipPath, std::string* msg);
 std::string exportSvg(const Document& doc, const Connectivity& conn, int view);
