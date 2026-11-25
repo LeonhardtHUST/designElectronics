@@ -155,7 +155,20 @@ void partDataTests(int& failures) {
         check(topology && fieldNets.size() == 4 && railNets.size() == 4,
               "tile-prefixed holes retain isolated tiles, five-hole columns and segmented rails", failures);
         const PartInst* tiled = isolated.d.part(breadboard);
-        std::string stored = isolated.d.serialize(true);
+        // `serialize()` stamps the current second into "saved"; comparing two full dumps across a
+        // second boundary would fail for reasons unrelated to the display-only pin addresses.
+        auto stableText = [](const Document& doc) {
+            std::string text = doc.serialize(true);
+            size_t at = text.find("\"saved\"");
+            if (at != std::string::npos) {
+                size_t begin = text.rfind('\n', at);
+                begin = begin == std::string::npos ? 0 : begin + 1;
+                size_t end = text.find('\n', at);
+                text.erase(begin, end == std::string::npos ? std::string::npos : end - begin + 1);
+            }
+            return text;
+        };
+        std::string stored = stableText(isolated.d);
         bool addresses = true;
         std::set<std::string> displayed;
         for (size_t index = 0; index < bb->pins.size(); ++index) displayed.insert(tiled->pinAddress((int)index));
@@ -167,7 +180,7 @@ void partDataTests(int& failures) {
         }
         check(addresses && displayed.size() == bb->pins.size(),
               "tiled pin addresses use unique BB1.Tn.hole notation", failures);
-        check(stored == isolated.d.serialize(true), "display formatting never changes stored pins or connections", failures);
+        check(stored == stableText(isolated.d), "display formatting never changes stored pins or connections", failures);
         PartInst single;
         single.type = "breadboard";
         single.props = {{"size", "half+"}};
