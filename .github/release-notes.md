@@ -4,6 +4,16 @@
 
 📖 **中文站点：** https://leonhardthust.github.io/designElectronics/ · 🌐 **网页编辑器：** https://leonhardthust.github.io/designElectronics/app/
 
+## 0.8.6 更新
+
+- **LED 按颜色导出。** 之前 SPICE 网表里所有 LED 共用同一个二极管模型（约 2.07 V），红/绿/蓝的压降差异在 ngspice 里全部丢失。现在按实时仿真器的颜色压降（红 1.8 V、橙 2.0 V、黄 2.1 V、绿 2.2 V、蓝/白 3.0 V）与 15 Ω 串联电阻，为每种颜色生成独立的二极管参数，导出的工作点与屏幕上看到的一致。
+- **光敏导出为光敏电阻。** 以前固定写成 1 MΩ，与“Light”滑块无关；现在按 `1 MΩ × 10^(-3·light/100)` 导出，与仿真器同一条公式。
+- **对拍表清零 BAD。** `--spice-xcheck` 的十三个电路现在十二个 `OK`、一个 `WARN`（二极管钳位相差 3.17%：固定 0.7 V 与指数结的模型形状差异）、零个 `BAD`。`tools/check_xcheck.py` 因此去掉了“已知 BAD”白名单，任何新的 `BAD` 都会让 CI 失败；`docs/SPICE_XCHECK.md` 已按新结果重新生成。
+
+### 已知限制
+
+二极管仍按固定 0.7 V 建模，与 ngspice 的指数结相差约 3%，对拍中标记为 `WARN` 而非 `BAD`。`--spice-xcheck` 需要本机 libngspice，CI 只覆盖 Linux；下载包本身不带 ngspice 库。
+
 ## 0.8.5 更新
 
 - **SPICE 对拍终于给出真实数值。** `--spice-xcheck` 之前把 ngspice 的每个向量都读成时间轴：`ngGet_Vec_Info` 返回的是复用的结构体，指针存到循环之后再取已经失效，于是几个毫不相干的电路都显示同一个 0.5 V。现在每个向量在查询时立即拷贝，报告反映真实节点电压，`docs/SPICE_XCHECK.md` 已按新结果重新生成。
