@@ -10,7 +10,7 @@
 - **实时仿真**：555、LED、逻辑器件、仪表以及 Arduino / ESP32 草图。
 - **免费、离线、无需账号**：项目保存为可分享的 `.dez` 文件。
 
-**[▶ 浏览器试用](https://LeonhardtHUST.github.io/designElectronics/app/)**（Pages 首次成功部署后可用） · [项目文档与截图](https://LeonhardtHUST.github.io/designElectronics/) · [中文介绍](https://LeonhardtHUST.github.io/designElectronics/zh/)
+**[▶ 浏览器试用](https://LeonhardtHUST.github.io/designElectronics/app/)** · [项目文档与截图](https://LeonhardtHUST.github.io/designElectronics/) · [中文介绍](https://LeonhardtHUST.github.io/designElectronics/zh/)
 
 英文说明：[README.en.md](README.en.md)
 
